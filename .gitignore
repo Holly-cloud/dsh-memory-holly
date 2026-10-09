@@ -1,0 +1,17 @@
+# ── 私人记忆数据：永不入库 ───────────────────────────────────────────────
+# 数据本体已解耦到仓库外的 ../dsh-memory-data/（memory.db、全量 memories.jsonl 等）。
+# 这里再次忽略同名目录，防止误放回来时被 git add 捕获。
+.migration/
+.import/
+.retired/
+.install/
+
+# 库文件与导出包：任何路径下的记忆库正文都不应进仓库
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+
+# 依赖与临时产物
+node_modules/
+*.log
