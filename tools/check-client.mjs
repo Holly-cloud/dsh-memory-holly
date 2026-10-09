@@ -477,12 +477,12 @@ check(
 const searchbarCss = styleNode.textContent.match(/\.dshm-searchbar\{[^}]*\}/)?.[0] ?? '';
 const searchbarFieldCss = styleNode.textContent.match(/\.dshm-searchbar-field\{[^}]*\}/)?.[0] ?? '';
 const searchbarIconCss = styleNode.textContent.match(/\.dshm-searchbar-icon\{[^}]*\}/)?.[0] ?? '';
-// 平台那条关键的覆盖写法（`.searchField>:first-child{padding:0}`）我们也必须照做：
-// 否则输入框自己的左右内边距会与图标叠加，文字被挤、图标贴边。
-const searchbarInnerCss =
-  styleNode.textContent.match(/\.dshm-searchbar-field>input,\.dshm-searchbar-field>div\{[^}]*\}/)?.[0] ?? '';
+// 输入框本体必须**没有自己的框**：外框只由 `.dshm-searchbar-field` 画。
+// （上一版这里是「清掉平台 Input 的 padding」，换成原生 input 之后改判 `.dshm-input` 的归零。）
+const nativeInputCss = styleNode.textContent.match(/\.dshm-input\{[^}]*\}/)?.[0] ?? '';
+const searchbarInnerCss = styleNode.textContent.match(/\.dshm-searchbar-field>input\{[^}]*\}/)?.[0] ?? '';
 check(
-  '搜索框样式：外框「描边 + 圆角 + flex + 内边距」，且输入框本体的内边距被清零（照平台 .searchField 的做法）',
+  '搜索框样式：外框「描边 + 圆角 + flex + 内边距」，而里面的 input 描边/背景/圆角/内边距全部归零（只有一个框）',
   searchbarCss !== '' &&
     searchbarFieldCss !== '' &&
     /display:flex/.test(searchbarFieldCss) &&
@@ -490,10 +490,13 @@ check(
     /border:\.5px solid var\(--dsw-alias-border-l2\)/.test(searchbarFieldCss) &&
     /border-radius:12px/.test(searchbarFieldCss) &&
     /padding:0 12px/.test(searchbarFieldCss) &&
-    /padding:0\}/.test(searchbarInnerCss) &&
-    // 图标是 span，**不能**被 `flex:1` 拉长（选择器刻意只写 input / div）。
+    /flex:1 1 auto/.test(searchbarInnerCss) &&
+    /border:0/.test(nativeInputCss) &&
+    /background:0 0/.test(nativeInputCss) &&
+    /border-radius:0/.test(nativeInputCss) &&
+    // 图标是 span，**不能**被 `flex:1` 拉长（选择器刻意只写 input）。
     !/\.dshm-searchbar-field>\*/.test(styleNode.textContent),
-  `inner="${searchbarInnerCss}"`,
+  `inner="${searchbarInnerCss}" native="${nativeInputCss}"`,
 );
 check(
   '搜索框样式：颜色**没有写死**（一律走 --dsw-alias-*，深浅色自动跟随）；图标不参与拉伸',
@@ -507,6 +510,7 @@ check(
 const zonePanelCss = styleNode.textContent.match(/\.dshm-zone-panel\{[^}]*\}/)?.[0] ?? '';
 const zoneOpenCss = styleNode.textContent.match(/\.dshm-zone\.is-open\{[^}]*\}/)?.[0] ?? '';
 const zonesCss = styleNode.textContent.match(/\.dshm-zones\{[^}]*\}/)?.[0] ?? '';
+const zoneBaseCss = styleNode.textContent.match(/\.dshm-zone\{[^}]*\}/)?.[0] ?? '';
 check(
   '两列功区：列间距为 0（两卡公共边只有一条线），启动卡去下边框、面板去上边框并上移 1px 盖住它',
   /grid-template-columns:1fr 1fr/.test(zonesCss) &&
@@ -518,12 +522,22 @@ check(
   `zones="${zonesCss}" open="${zoneOpenCss}" panel="${zonePanelCss}"`,
 );
 check(
-  '边框融合：折叠时只有外角是圆的（左上/右上），展开面板**只保留下面两个圆角**（一个盒子从中间打开）',
+  // ⚠️ 这条是「启动后搜索区掉到底部」那个 bug 的**回归守卫**：grid 自动放置会把跨两列的
+  // 面板排到第一行、把两卡挤到第二行。必须给两卡 `grid-row:1`、面板 `grid-row:2`。
+  '两列功区：两卡固定在 `grid-row:1`、面板固定在 `grid-row:2`（否则跨列面板会把两卡挤下去）',
+  /grid-row:1/.test(zoneBaseCss) && /grid-row:2/.test(zonePanelCss),
+  `zone="${zoneBaseCss}" panel="${zonePanelCss}"`,
+);
+check(
+  '边框融合：折叠时只有外角是圆的（左上/右上），展开面板**只保留下面两个圆角**、启动卡的下角要抹平',
   /\.dshm-zone:first-child\{[^}]*border-radius:var\(--dsw-radius-xl\) 0 0 var\(--dsw-radius-xl\)/.test(styleNode.textContent) &&
     /\.dshm-zone:last-child\{[^}]*border-radius:0 var\(--dsw-radius-xl\) var\(--dsw-radius-xl\) 0/.test(styleNode.textContent) &&
     /border-radius:0 0 var\(--dsw-radius-xl\) var\(--dsw-radius-xl\)/.test(zonePanelCss) &&
     // 面板必须横跨两列，左右边缘才能和上面两卡严丝合缝。
-    /grid-column:1\/-1/.test(zonePanelCss),
+    /grid-column:1\/-1/.test(zonePanelCss) &&
+    // 启动卡（左右两侧各一）的下角必须抹平，否则接缝处会出现两个小圆角缺口。
+    /\.dshm-zone:first-child\.is-open\{[^}]*border-bottom-left-radius:0/.test(styleNode.textContent) &&
+    /\.dshm-zone:last-child\.is-open\{[^}]*border-bottom-right-radius:0/.test(styleNode.textContent),
   `panel="${zonePanelCss}"`,
 );
 check(
@@ -1576,8 +1590,8 @@ const SEARCH_ITEM = {
 /**
  * 浅渲染搜索页。状态顺序：1 draft / 2 submitted / 3 state / 4 openId / 5 openState /
  * 6 editing / 7 editDraft / 8 editBusy / 9 editError / 10 notice / 11 actionError /
- * 12 recent（「最近入库」）/ 13 writeText / 14 writeSource / 15 writeState / 16 writeNotice ——
- * 后五个都**排在最后**，前 11 个的下标因此始终不变。
+ * 12 recent（「最近入库」）/ 13 writeText / 14 writeSource / 15 writeState / 16 writeNotice /
+ * 17 writeOpen —— 后六个都**排在最后**，前 11 个的下标因此始终不变。
  * @param {object} [overrides] 覆盖任意状态。
  * @returns {object[]} 展平后的元素节点。
  */
@@ -1599,6 +1613,7 @@ function renderSearch(overrides = {}) {
     overrides.writeSource ?? '',
     overrides.writeState ?? { status: 'idle' },
     overrides.writeNotice ?? '',
+    overrides.writeOpen ?? false,
   ];
   return searchTab === null ? [] : flattenTree(searchTab({ t }));
 }
@@ -1784,18 +1799,21 @@ check(
   JSON.stringify(zonesNode(searchIdlePage)?.props?.className ?? null),
 );
 check(
-  '搜索页：搜索框 = 放大镜（在输入框内左侧）+ 输入框 + 搜索按钮，语义是 role="search"',
+  // ⚠️ 输入框必须是**原生 `input` + `.dshm-input`**：平台 `Input` 自带包裹层（内部还有自己的
+  // 描边），上一版只清了外层 → 用户看到"两个框"。原生元素 + 显式归零才只有一个框。
+  '搜索页：搜索框 = 放大镜（在输入框内左侧）+ **原生 input** + 搜索按钮，语义是 role="search"',
   (() => {
     const bar = searchBarNode(searchIdlePage);
     if (bar === undefined) return false;
     const field = (bar.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-field');
     const iconSpan = (field?.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-icon');
-    const input = (field?.children ?? []).find((node) => node.type === fakePrimitives.Input);
+    const input = (field?.children ?? []).find((node) => node.type === 'input');
     const actions = (bar.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-actions');
     return (
       bar.props.role === 'search' &&
       iconSpan !== undefined &&
       input !== undefined &&
+      input.props.className === 'dshm-input' &&
       input.props.placeholder === t('searchPlaceholder') &&
       input.props['aria-label'] === t('search') &&
       actions !== undefined &&
@@ -1803,6 +1821,21 @@ check(
     );
   })(),
   JSON.stringify(searchBarNode(searchIdlePage)?.children?.map((n) => n.props?.className ?? n.type) ?? null),
+);
+check(
+  '搜索框只有一个框：`.dshm-searchbar-field` 负责描边，里面的 input 描边/背景/圆角全部归零',
+  (() => {
+    const inner = styleNode.textContent.match(/\.dshm-searchbar-field>input\{[^}]*\}/)?.[0] ?? '';
+    const native = styleNode.textContent.match(/\.dshm-input\{[^}]*\}/)?.[0] ?? '';
+    return (
+      /flex:1 1 auto/.test(inner) &&
+      /background:0 0/.test(native) &&
+      /border:0/.test(native) &&
+      /border-radius:0/.test(native) &&
+      /outline:none/.test(native)
+    );
+  })(),
+  `inner="${styleNode.textContent.match(/\.dshm-searchbar-field>input\{[^}]*\}/)?.[0] ?? ''}"`,
 );
 check(
   '搜索页：搜索栏里没有多余的「关键词建议」长句（建议移到 placeholder 与 idle 提示，不常驻占位）',
@@ -1854,10 +1887,10 @@ check(
   JSON.stringify(allZoneCards(writeCollapsedPage).map((n) => ({ c: classNameOf(n), text: deepText(zoneBody(n)?.children ?? null).slice(0, 2) }))),
 );
 check(
-  '搜索页：都没启动时**没有展开面板**，两卡都不是 is-open（边框方正）',
+  '搜索页：都没启动时**没有展开面板**，两卡都不带 is-open（边框方正）',
   allZonePanels(writeCollapsedPage).length === 0 &&
-    classNameOf(searchZone(writeCollapsedPage)) === 'dshm-zone' &&
-    classNameOf(writeZone(writeCollapsedPage)) === 'dshm-zone',
+    !/\bis-open\b/.test(classNameOf(searchZone(writeCollapsedPage))) &&
+    !/\bis-open\b/.test(classNameOf(writeZone(writeCollapsedPage))),
   JSON.stringify([classNameOf(searchZone(writeCollapsedPage)), classNameOf(writeZone(writeCollapsedPage))]),
 );
 check(
@@ -1867,8 +1900,8 @@ check(
     const panels = allZonePanels(searchReadyPage);
     // 顺序必须是 [搜索卡(is-open), 结果面板, 写入卡] —— 面板夹在启动卡后面才连得上。
     return (
-      classNameOf(searchZone(searchReadyPage)) === 'dshm-zone is-open' &&
-      classNameOf(writeZone(searchReadyPage)) === 'dshm-zone' &&
+      /\bis-open\b/.test(classNameOf(searchZone(searchReadyPage))) &&
+      !/\bis-open\b/.test(classNameOf(writeZone(searchReadyPage))) &&
       cards.length === 2 &&
       panels.length === 1 &&
       searchReadyPage.indexOf(searchZone(searchReadyPage)) <
@@ -1881,12 +1914,12 @@ check(
 check(
   '搜索页：写入启动 → 同样只有右侧那卡 is-open + 一个面板，且**一次只开一个**（互斥）',
   (() => {
-    const writeOpen = renderSearch({ writeText: '要记的一条', recent: { status: 'ready', data: { ok: true, count: 0, items: [] } } });
+    const writeOpen = renderSearch({ writeOpen: true, recent: { status: 'ready', data: { ok: true, count: 0, items: [] } } });
     const cards = allZoneCards(writeOpen);
     const panels = allZonePanels(writeOpen);
     return (
-      classNameOf(writeZone(writeOpen)) === 'dshm-zone is-open' &&
-      classNameOf(searchZone(writeOpen)) === 'dshm-zone' &&
+      /\bis-open\b/.test(classNameOf(writeZone(writeOpen))) &&
+      !/\bis-open\b/.test(classNameOf(searchZone(writeOpen))) &&
       cards.length === 2 &&
       panels.length === 1 &&
       writeOpen.indexOf(writeZone(writeOpen)) < writeOpen.indexOf(panels[0])
@@ -1894,13 +1927,46 @@ check(
   })(),
 );
 check(
+  '搜索页：**写入记忆区可点击** —— 整块带点击处理、键盘可达、有展开态与「点这里写一条」暗示',
+  (() => {
+    const zone = writeZone(writeCollapsedPage);
+    const hint = deepNodes(zone?.children ?? null).find((n) => classNameOf(n) === 'dshm-zone-hint');
+    return (
+      zone !== undefined &&
+      typeof zone.props.onClick === 'function' &&
+      zone.props.role === 'button' &&
+      zone.props.tabIndex === 0 &&
+      zone.props['aria-expanded'] === false &&
+      hint !== undefined &&
+      hint.children?.[0] === t('writeOpenHint')
+    );
+  })(),
+  JSON.stringify({ cls: classNameOf(writeZone(writeCollapsedPage)), role: writeZone(writeCollapsedPage)?.props?.role }),
+);
+check(
+  '搜索页：点开的写入区带 `is-open` + `aria-expanded=true`，那句暗示换成「收起」（点一下能关）',
+  (() => {
+    const open = renderSearch({ writeOpen: true });
+    const zone = writeZone(open);
+    const hint = deepNodes(zone?.children ?? null).find((n) => classNameOf(n) === 'dshm-zone-hint');
+    return (
+      classNameOf(zone) === 'dshm-zone is-open is-clickable' &&
+      zone.props['aria-expanded'] === true &&
+      zone.props.onClick !== undefined &&
+      hint?.children?.[0] === t('writeCollapse') &&
+      zonePanels(open).length === 1
+    );
+  })(),
+);
+check(
   '搜索页：写入面板 = 原文 textarea + 来源输入 + 「存进记忆」按钮；收起时**一个控件都不画**',
   (() => {
-    const writeOpen = renderSearch({ writeText: '要记的一条' });
-    const panel = zonePanels(writeOpen)[0];
+    const open = renderSearch({ writeText: '要记的一条' });
+    const panel = zonePanels(open)[0];
     const panelNodes = deepNodes(panel.children);
     const ta = panelNodes.find((n) => n.type === 'textarea');
-    const src = panelNodes.find((n) => n.type === fakePrimitives.Input);
+    // 来源输入也是**原生 input**（同 `.dshm-input`），不是平台 Input。
+    const src = panelNodes.find((n) => n.type === 'input' && n.props?.className === 'dshm-input');
     return (
       ta !== undefined &&
       ta.props.value === '要记的一条' &&
