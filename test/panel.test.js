@@ -18,6 +18,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { memoryPanelRoutes, MEMORY_ROUTE_PREFIX } from '../src/host/panel.js';
+import { openDatabase } from '../src/host/db.js';
+import { MemoryStore } from '../src/host/store.js';
+import { makeClock } from './util.js';
 
 /** 造 Request 用的哑 base（不参与任何网络行为）。 */
 const BASE = 'http://127.0.0.1:19387';
@@ -485,6 +488,7 @@ function normalRequests() {
     [P('/state'), () => getReq(P('/state'))],
     [P('/search'), () => getReq(`${P('/search')}?q=%E5%92%96%E5%95%A1&limit=5`)],
     [P('/memories'), () => getReq(`${P('/memories')}?limit=10&offset=0`)],
+    [P('/recent'), () => getReq(`${P('/recent')}?limit=10`)],
     [P('/memory'), () => getReq(`${P('/memory')}?id=m1`)],
     [P('/remember'), () => postReq(P('/remember'), { text: '宝宝喜欢冰美式', source: '面板' })],
     [P('/forget'), () => postReq(P('/forget'), { id: 'm1' })],
@@ -561,8 +565,8 @@ test('护栏：**每条路由都必须声明 requestBody:"buffered"**（漏了�
     );
   }
 
-  // panel.js 的契约注释写着「33 条注册、覆盖 35 个端点」：数量变了就要同步这份注释。
-  assert.equal(routes.length, 36, '路由条数与 panel.js 契约注释不一致');
+  // panel.js 的契约注释写着「37 条注册、覆盖 39 个端点」：数量变了就要同步这份注释。
+  assert.equal(routes.length, 37, '路由条数与 panel.js 契约注释不一致');
 });
 
 // ── 护栏 2：path 唯一 / methods 合法 ─────────────────────────────────────────
@@ -950,6 +954,131 @@ test('/memories：正文截断到 300 字并带 truncated 标记，未超长的�
   // 列表页大小仍是分页参数（本用例只确认它被透传）。
   assert.equal(service.calls.listMemories.length, 1);
   assert.ok(service.calls.listMemories[0].limit > 0);
+});
+
+// ── /recent（最近入库） ──────────────────────────────────────────────────────
+
+test('/recent：默认取 10 条、按入库时刻倒序（透传 limit）、正文同样截断到 300 字', async () => {
+  const service = makeFakeService();
+  const route = routeBySuffix(memoryPanelRoutes(service), '/recent');
+
+  const { payload } = await readEnvelope(await route.fetch(getReq(P('/recent'))));
+
+  assert.equal(payload.ok, true);
+  assert.equal(payload.limit, 10, '默认就是 10 条');
+  assert.equal(payload.count, 2);
+  assert.equal(payload.items.length, 2);
+  // 与 /memories 同源：ORDER BY created_at DESC 由 store 保证，这里确认走的是同一把整形器。
+  assert.equal(payload.items[0].text.length, 300);
+  assert.equal(payload.items[0].text, LONG_TEXT.slice(0, 300));
+  assert.equal(payload.items[0].truncated, true);
+  assert.equal(payload.items[1].text, '短正文');
+  assert.equal(payload.items[1].truncated, false);
+  // 入库时刻必须带出来：面板那一行要画它（否则「最近入库」只剩正文、看不出"最近"）。
+  assert.equal(payload.items[0].createdAt, '2026-01-01T00:00:00.000Z');
+
+  // 只读：一次 listMemories、offset 恒为 0，其它能力一个都不许碰。
+  assert.equal(service.calls.listMemories.length, 1);
+  assert.equal(service.calls.listMemories[0].limit, 10);
+  assert.equal(service.calls.listMemories[0].offset, 0);
+  assert.equal(service.calls.search.length, 0, '最近入库不打检索（零 embedding、零额外查询）');
+  assert.equal(service.calls.getMemory.length, 0);
+  assert.equal(service.calls.addMemory.length, 0);
+  assert.equal(service.calls.softDelete.length, 0);
+});
+
+test('/recent：limit 夹在 1..50；非法值回退默认 10', async () => {
+  const service = makeFakeService();
+  const route = routeBySuffix(memoryPanelRoutes(service), '/recent');
+  const call = async (query) => {
+    const { payload } = await readEnvelope(await route.fetch(getReq(`${P('/recent')}?${query}`)));
+    assert.equal(payload.ok, true);
+    return service.calls.listMemories[service.calls.listMemories.length - 1].limit;
+  };
+
+  assert.equal(await call('limit=3'), 3);
+  assert.equal(await call('limit=50'), 50);
+  assert.equal(await call('limit=999'), 50, '超过上限要夹到 50');
+  assert.equal(await call('limit=0'), 1, '下限是 1');
+  assert.equal(await call('limit=-5'), 1);
+  assert.equal(await call('limit=abc'), 10, '非法值回退默认');
+  assert.equal(await call(''), 10, '不给 limit 就是 10');
+});
+
+test('/recent：信封形状合法（ok 布尔 + items 数组），store 返回坏结构也不抛', async () => {
+  const service = makeFakeService({
+    ensureStore() {
+      return {
+        listMemories() {
+          return { total: 0, items: null }; // 坏结构：拿不到 items
+        },
+      };
+    },
+  });
+  const route = routeBySuffix(memoryPanelRoutes(service), '/recent');
+
+  const { res, payload } = await readEnvelope(await route.fetch(getReq(P('/recent'))));
+
+  assert.equal(res.status, 200);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.items, [], 'items 坏值要退化成空数组，不能把 null 塞给面板');
+  assert.equal(payload.count, 0);
+});
+
+// ── /recent：真库端到端（这条口径手工假 service 证明不了） ────────────────────
+
+test('/recent（真库）：最近入库 = 按 created_at 倒序的前 10 条，软删的不算', async () => {
+  // 真 SQLite（:memory:）+ 每次调用前进 1 秒的固定时钟 → created_at 严格递增、顺序可预测。
+  const db = openDatabase(':memory:');
+  const store = new MemoryStore(db, { now: makeClock() });
+  const ids = [];
+  // 12 条：比默认上限（10）多 2 条，正好验证"只取 10 条"。
+  for (let i = 1; i <= 12; i += 1) {
+    const row = store.addMemory({ text: `第 ${i} 条记忆`, source: 'real-store' });
+    ids.push(row.id);
+  }
+  // 把第 12 条（最新的那条）软删掉：它不该出现在"最近入库"里。
+  store.softDeleteMemory(ids[11]);
+
+  const service = makeFakeService({ ensureStore: () => store });
+  const route = routeBySuffix(memoryPanelRoutes(service), '/recent');
+  const { payload } = await readEnvelope(await route.fetch(getReq(P('/recent'))));
+
+  assert.equal(payload.ok, true);
+  assert.equal(payload.limit, 10, '默认 10 条 —— 与 client.js 的 RECENT_LIMIT 同值');
+  assert.equal(payload.count, 10, '库里 11 条活着的记忆，这一块只给 10 条');
+
+  const texts = payload.items.map((item) => item.text);
+  assert.deepEqual(
+    texts,
+    [11, 10, 9, 8, 7, 6, 5, 4, 3, 2].map((n) => `第 ${n} 条记忆`),
+    '必须是 created_at 倒序的前 10 条（最新的那条已被软删，不能顶上来）',
+  );
+  assert.ok(!texts.includes('第 12 条记忆'), '软删的那条不许出现在最近入库里');
+  assert.ok(!texts.includes('第 1 条记忆'), '第 11 条活的都比它新，所以第 1 条应被挤出前 10');
+
+  // 每条都要带入库时刻，面板那一行才有东西画。
+  for (const item of payload.items) {
+    assert.equal(typeof item.createdAt, 'string');
+    assert.ok(item.createdAt.length > 0, 'createdAt 不能为空');
+  }
+
+  db.close();
+});
+
+test('/recent（真库）：limit 生效 —— 给 3 就只取最新 3 条', async () => {
+  const db = openDatabase(':memory:');
+  const store = new MemoryStore(db, { now: makeClock() });
+  for (let i = 1; i <= 5; i += 1) store.addMemory({ text: `第 ${i} 条`, source: 'real-store' });
+
+  const service = makeFakeService({ ensureStore: () => store });
+  const route = routeBySuffix(memoryPanelRoutes(service), '/recent');
+  const { payload } = await readEnvelope(await route.fetch(getReq(`${P('/recent')}?limit=3`)));
+
+  assert.equal(payload.count, 3);
+  assert.deepEqual(payload.items.map((item) => item.text), ['第 5 条', '第 4 条', '第 3 条']);
+
+  db.close();
 });
 
 // ── /search limit 夹取 ──────────────────────────────────────────────────────

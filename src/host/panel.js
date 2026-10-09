@@ -50,6 +50,10 @@ const LIST_TEXT_LIMIT = 300;
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
 
+/** 「最近入库」块（搜索页）默认条数 = 10；上限给 50 就够，别让人把它当第二个分页列表用。 */
+const RECENT_LIMIT_DEFAULT = 10;
+const RECENT_LIMIT_MAX = 50;
+
 /**
  * 造一个 JSON 响应。
  *
@@ -129,6 +133,28 @@ function shapeMemory(row) {
 }
 
 /**
+ * 把一条 store 行整形为**列表条目**（正文截断到 `LIST_TEXT_LIMIT`）。
+ *
+ * `/memories`（分页浏览）与 `/recent`（最近入库）共用这一个整形器：
+ * 列表里可能有几千条，全文只在展开时单独取，所以两处的截断口径必须完全一致。
+ *
+ * @param {Record<string, unknown>} row store 行。
+ * @returns {object} 列表条目。
+ */
+function shapeListItem(row) {
+  const text = String(row.text ?? '');
+  return {
+    id: String(row.id ?? ''),
+    text: text.length > LIST_TEXT_LIMIT ? text.slice(0, LIST_TEXT_LIMIT) : text,
+    truncated: text.length > LIST_TEXT_LIMIT,
+    source: row.source ?? null,
+    section: row.section ?? null,
+    kind: row.kind ?? null,
+    createdAt: row.created_at ?? null,
+  };
+}
+
+/**
  * 校验「必须是 JSON 对象」的请求体。
  *
  * @param {unknown} value 解析结果。
@@ -146,7 +172,7 @@ function isPlainObject(value) {
  *
  * @param {object} service 宿主侧 MemoryService（`lib/index.js` 里那个实例）。
  * @returns {{path: string, methods: string[], requestBody: 'buffered', fetch: (req: Request) => Promise<Response>}[]}
- *   路由描述数组（36 条注册、覆盖 38 个端点），顺序即注册顺序。
+ *   路由描述数组（37 条注册、覆盖 39 个端点），顺序即注册顺序。
  */
 export function memoryPanelRoutes(service) {
   /** 取仓储（惰性开库，幂等）。 */
@@ -213,18 +239,7 @@ export function memoryPanelRoutes(service) {
     const offset = intParam(params, 'offset', 0, { min: 0 });
     const page = store().listMemories({ limit, offset });
     const rows = Array.isArray(page?.items) ? page.items : [];
-    const items = rows.map((row) => {
-      const text = String(row.text ?? '');
-      return {
-        id: String(row.id ?? ''),
-        // 截断是刻意的：列表可能有几千条，全文只在展开时单独取。
-        text: text.length > LIST_TEXT_LIMIT ? text.slice(0, LIST_TEXT_LIMIT) : text,
-        truncated: text.length > LIST_TEXT_LIMIT,
-        source: row.source ?? null,
-        kind: row.kind ?? null,
-        createdAt: row.created_at ?? null,
-      };
-    });
+    const items = rows.map(shapeListItem);
     return {
       ok: true,
       total: Number(page?.total ?? 0),
@@ -232,6 +247,26 @@ export function memoryPanelRoutes(service) {
       count: items.length,
       items,
     };
+  }
+
+  /**
+   * GET `/recent` —— **最近入库**（搜索页那一块）：最近被记录进库的若干条记忆。
+   *
+   * 口径（与 `/memories` 完全同源，只是去掉分页、固定条数）：
+   * - 排序用 `created_at DESC`（`listMemories` 的既定顺序），也就是**入库时刻**；
+   * - ⚠️ 导入进来的旧记忆，`created_at` 是**导入那一刻**、不是正文写下的时刻 ——
+   *   面板就按「最近被记进库里」呈现，这个口径是真的，别把它读成"最近发生的事"。
+   * - 只读、不分页、不写任何状态。
+   *
+   * @param {URLSearchParams} params 查询参数（`limit`）。
+   * @returns {Promise<object>} 信封。
+   */
+  async function recentRoute(params) {
+    const limit = intParam(params, 'limit', RECENT_LIMIT_DEFAULT, { min: 1, max: RECENT_LIMIT_MAX });
+    const page = store().listMemories({ limit, offset: 0 });
+    const rows = Array.isArray(page?.items) ? page.items : [];
+    const items = rows.map(shapeListItem);
+    return { ok: true, limit, count: items.length, items };
   }
 
   /**
@@ -857,6 +892,7 @@ export function memoryPanelRoutes(service) {
   const table = [
     ['/state', ['GET'], (params, body) => stateRoute()],
     ['/search', ['GET'], (params, body) => searchRoute(params)],
+    ['/recent', ['GET'], (params, body) => recentRoute(params)],
     ['/memories', ['GET'], (params, body) => listRoute(params)],
     ['/memory', ['GET'], (params, body) => memoryRoute(params)],
     ['/remember', ['POST'], (params, body) => rememberRoute(body)],

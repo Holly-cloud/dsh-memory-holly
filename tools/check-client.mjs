@@ -1515,7 +1515,8 @@ const SEARCH_ITEM = {
 
 /**
  * 浅渲染搜索页。状态顺序：1 draft / 2 submitted / 3 state / 4 openId / 5 openState /
- * 6 editing / 7 editDraft / 8 editBusy / 9 editError / 10 notice / 11 actionError。
+ * 6 editing / 7 editDraft / 8 editBusy / 9 editError / 10 notice / 11 actionError /
+ * 12 recent（「最近入库」，**排在最后**是为了不打乱前 11 个的下标）。
  * @param {object} [overrides] 覆盖任意状态。
  * @returns {object[]} 展平后的元素节点。
  */
@@ -1532,6 +1533,7 @@ function renderSearch(overrides = {}) {
     overrides.editError ?? '',
     overrides.notice ?? '',
     overrides.actionError ?? '',
+    overrides.recent ?? { status: 'loading' },
   ];
   return searchTab === null ? [] : flattenTree(searchTab({ t }));
 }
@@ -1586,6 +1588,179 @@ check(
 check(
   '搜索页：送审窗口里那个按钮叫「送审」而不是「保存」（保存容易被读成"已经改库了"）',
   textLeaves(searchEditing).every((text) => text !== t('save')),
+);
+
+// ── 搜索页：新增的「最近入库」块 ───────────────────────────────────────────────
+// 口径：最近被记进库的 10 条（created_at 倒序）。它**没有检索分**，所以
+// 「关键词分 / 向量分」「读取 / 整理」那些 Tag 一个都不许出现 —— 硬画就是 0 或 NaN。
+const RECENT_ITEMS = [
+  { id: 'rec-1', text: '刚记进来的一条', source: 'agent', createdAt: '2026-10-09T12:00:00.000Z', truncated: false },
+  { id: 'rec-2', text: '更早一点的一条', source: null, createdAt: '2026-10-08T09:30:00.000Z', truncated: false },
+];
+const recentCardNode = (nodes) => nodes.find((node) => node.props?.title === t('recentTitle'));
+/**
+ * 递归取一棵（可能含函数组件的）元素树的**全部文本叶子**。
+ *
+ * 不能直接用 `textLeaves`：它只剥一层；而 `Card` / `Empty` / `Row` 这些函数组件是
+ * 以 `{type: fn, children: [...]}` 的形状留在树里的，文案在它们的孙子层。
+ * `props.action`（卡片右上角）**不算正文**，所以只走 `children`。
+ * @param {unknown} node 根节点。
+ * @returns {string[]} 文本叶子。
+ */
+function deepText(node) {
+  const out = [];
+  (function walk(current) {
+    if (current === null || current === undefined) return;
+    if (Array.isArray(current)) {
+      for (const child of current) walk(child);
+      return;
+    }
+    if (typeof current === 'string' || typeof current === 'number') {
+      out.push(String(current));
+      return;
+    }
+    if (typeof current !== 'object') return;
+    for (const child of current.children ?? []) walk(child);
+  })(node);
+  return out;
+}
+/** 一张卡正文里的文本叶子（不含右上角 action）。 */
+const cardText = (card) => (card === undefined ? [] : deepText(card.children));
+/**
+ * 递归收集元素节点（含函数组件本身）。
+ * `flattenTree` 只走 `children`，但遇到**函数组件**时会把组件节点留在结果里 ——
+ * 要检查「某个局部组件有没有被挂上」，就用这个。
+ * @param {unknown} node 根节点。
+ * @returns {object[]} 元素节点。
+ */
+function deepNodes(node) {
+  const out = [];
+  (function walk(current) {
+    if (current === null || current === undefined) return;
+    if (Array.isArray(current)) {
+      for (const child of current) walk(child);
+      return;
+    }
+    if (typeof current !== 'object') return;
+    out.push(current);
+    for (const child of current.children ?? []) walk(child);
+  })(node);
+  return out;
+}
+/** 在元素树里递归数某个文案（含函数组件内部）。 */
+const deepCountText = (node, label) => deepText(node).filter((text) => text === label).length;
+/**
+ * 在一张卡**正文**里数某段文案（不含右上角 `action`）。
+ * @param {object|undefined} card 卡片节点。
+ * @param {string} text 要数的文案。
+ * @returns {number} 出现次数。
+ */
+const cardCountText = (card, text) => deepCountText(card?.children ?? null, text);
+/** 在元素树里递归数某类 className 的节点（含函数组件内部）。 */
+const deepCountClass = (node, className) => {
+  const out = [];
+  (function walk(current) {
+    if (current === null || current === undefined) return;
+    if (Array.isArray(current)) {
+      for (const child of current) walk(child);
+      return;
+    }
+    if (typeof current !== 'object') return;
+    if (current.props?.className === className) out.push(current);
+    for (const child of current.children ?? []) walk(child);
+  })(node);
+  return out.length;
+};
+const recentCollapsed =
+  attempt('浅渲染搜索页（最近入库：未展开）不抛错', () =>
+    renderSearch({ recent: { status: 'ready', data: { ok: true, limit: 10, count: 2, items: RECENT_ITEMS } } }),
+  ) ?? [];
+check(
+  '搜索页：「最近入库」块按 10 条的口径画出来 —— 卡标题 + 条数说明 + 每行一条',
+  (() => {
+    const card = recentCardNode(recentCollapsed);
+    return (
+      card !== undefined &&
+      cardText(card).includes(t('recentHint').replace('{count}', '2')) &&
+      deepCountClass(card, 'dshm-item is-clickable') === 2 &&
+      cardText(card).includes('刚记进来的一条') &&
+      cardText(card).includes('更早一点的一条')
+    );
+  })(),
+  JSON.stringify(cardText(recentCardNode(recentCollapsed))),
+);
+check(
+  '搜索页：「最近入库」行不许画检索分（关键词分 / 向量分 / 读取 / 整理）—— 这里没有分数，画了就是 0 或 NaN',
+  (() => {
+    const card = recentCardNode(recentCollapsed);
+    if (card === undefined) return false;
+    const texts = cardText(card);
+    return (
+      cardCountText(card, t('keywordScore')) === 0 &&
+      cardCountText(card, t('vectorScore')) === 0 &&
+      !texts.some((text) => String(text).indexOf(t('scoreReadTag').replace('{count}', '')) === 0) &&
+      !texts.some((text) => String(text).indexOf(t('scoreTidyTag').replace('{count}', '')) === 0)
+    );
+  })(),
+  JSON.stringify(recentCardNode(recentCollapsed) === undefined ? null : cardText(recentCardNode(recentCollapsed)).slice(0, 8)),
+);
+check(
+  '搜索页：「最近入库」行带**入库时刻**（否则「最近」两个字无从判断）',
+  (() => {
+    const card = recentCardNode(recentCollapsed);
+    if (card === undefined) return false;
+    // localDateTime 的结果随系统时区变，所以只断言「不是原始 ISO 串、也不是空」。
+    return cardText(card).some((text) => typeof text === 'string' && text !== '' && text !== '2026-10-09T12:00:00.000Z' && /2026/.test(text));
+  })(),
+  JSON.stringify(cardText(recentCardNode(recentCollapsed) ?? []).slice(0, 6)),
+);
+check(
+  '搜索页：「最近入库」块带一个「刷新」（它是只读快照，删完 / 想看最新时要能手动重取）',
+  countText(propTree(recentCardNode(recentCollapsed), 'action'), t('recentRefresh')) === 1,
+);
+check(
+  '搜索页：「最近入库」等待中只画「加载中」，不画空态（还没拿到就说"库里没有"是假信息）',
+  (() => {
+    const card = recentCardNode(renderSearch({ recent: { status: 'loading' } }));
+    return card !== undefined && cardText(card).includes(t('loading')) && cardCountText(card, t('recentEmpty')) === 0;
+  })(),
+);
+check(
+  // ⚠️ `Empty` 是 lib/client.js 里的**局部组件**（不是平台 primitive），浅渲染看不见它内部的文案。
+  // 所以这里能测的是「空态真的挂了 Empty，且文案是空态那句」；文案本身在实机 / 真库上验。
+  '搜索页：「最近入库」库真空时挂上空态（拿到的不是"加载中"，也不是空列表）',
+  (() => {
+    const card = recentCardNode(renderSearch({ recent: { status: 'ready', data: { ok: true, count: 0, items: [] } } }));
+    const emptyEl = deepNodes(card?.children ?? null).find((node) => typeof node.type === 'function' && node.type.name === 'Empty');
+    return card !== undefined && emptyEl !== undefined && emptyEl.props.text === t('recentEmpty');
+  })(),
+);
+check(
+  '搜索页：「最近入库」取不到时**如实显示原因**（不静默、不假装成空库）',
+  (() => {
+    const card = recentCardNode(renderSearch({ recent: { status: 'error', message: 'HTTP 500：响应不是 JSON' } }));
+    return card !== undefined && cardText(card).some((text) => String(text).includes('HTTP 500'));
+  })(),
+);
+check(
+  '搜索页：「最近入库」的行同样**不常驻按钮**，展开且全文取回后才给「改 / 删」',
+  (() => {
+    const collapsed = recentCardNode(recentCollapsed);
+    const expanded = recentCardNode(
+      renderSearch({
+        recent: { status: 'ready', data: { ok: true, count: 2, items: RECENT_ITEMS } },
+        openId: 'rec-1',
+        openState: { status: 'ready', memory: { id: 'rec-1', text: '刚记进来的一条' } },
+      }),
+    );
+    if (collapsed === undefined || expanded === undefined) return false;
+    return (
+      cardCountText(collapsed, t('searchEdit')) === 0 &&
+      cardCountText(collapsed, t('delete')) === 0 &&
+      cardCountText(expanded, t('searchEdit')) === 1 &&
+      cardCountText(expanded, t('delete')) === 1
+    );
+  })(),
 );
 
 // 两页各有自己的「一键通过」（只在真有东西时出现）：
