@@ -504,6 +504,34 @@ check(
       /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|\b(white|black|red|blue|gray|grey)\b/.test(css),
     ),
 );
+const zonePanelCss = styleNode.textContent.match(/\.dshm-zone-panel\{[^}]*\}/)?.[0] ?? '';
+const zoneOpenCss = styleNode.textContent.match(/\.dshm-zone\.is-open\{[^}]*\}/)?.[0] ?? '';
+const zonesCss = styleNode.textContent.match(/\.dshm-zones\{[^}]*\}/)?.[0] ?? '';
+check(
+  '两列功区：列间距为 0（两卡公共边只有一条线），启动卡去下边框、面板去上边框并上移 1px 盖住它',
+  /grid-template-columns:1fr 1fr/.test(zonesCss) &&
+    /column-gap:0/.test(zonesCss) &&
+    /border-bottom-color:transparent/.test(zoneOpenCss) &&
+    /padding-bottom:0/.test(zoneOpenCss) &&
+    /border-top-color:transparent/.test(zonePanelCss) &&
+    /margin-top:-1px/.test(zonePanelCss),
+  `zones="${zonesCss}" open="${zoneOpenCss}" panel="${zonePanelCss}"`,
+);
+check(
+  '边框融合：折叠时只有外角是圆的（左上/右上），展开面板**只保留下面两个圆角**（一个盒子从中间打开）',
+  /\.dshm-zone:first-child\{[^}]*border-radius:var\(--dsw-radius-xl\) 0 0 var\(--dsw-radius-xl\)/.test(styleNode.textContent) &&
+    /\.dshm-zone:last-child\{[^}]*border-radius:0 var\(--dsw-radius-xl\) var\(--dsw-radius-xl\) 0/.test(styleNode.textContent) &&
+    /border-radius:0 0 var\(--dsw-radius-xl\) var\(--dsw-radius-xl\)/.test(zonePanelCss) &&
+    // 面板必须横跨两列，左右边缘才能和上面两卡严丝合缝。
+    /grid-column:1\/-1/.test(zonePanelCss),
+  `panel="${zonePanelCss}"`,
+);
+check(
+  '两列功区：颜色**没有写死**（一律走 --dsw-alias-*，深浅色自动跟随）',
+  ![zonesCss, zoneOpenCss, zonePanelCss].some((css) =>
+    /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|\b(white|black|red|blue|gray|grey)\b/.test(css),
+  ),
+);
 check(
   '默认页是「仓管」；「指标格」这种东西整块不存在（组件与 CSS 都已删，不许复活）',
   (() => {
@@ -1548,7 +1576,8 @@ const SEARCH_ITEM = {
 /**
  * 浅渲染搜索页。状态顺序：1 draft / 2 submitted / 3 state / 4 openId / 5 openState /
  * 6 editing / 7 editDraft / 8 editBusy / 9 editError / 10 notice / 11 actionError /
- * 12 recent（「最近入库」，**排在最后**是为了不打乱前 11 个的下标）。
+ * 12 recent（「最近入库」）/ 13 writeText / 14 writeSource / 15 writeState / 16 writeNotice ——
+ * 后五个都**排在最后**，前 11 个的下标因此始终不变。
  * @param {object} [overrides] 覆盖任意状态。
  * @returns {object[]} 展平后的元素节点。
  */
@@ -1566,6 +1595,10 @@ function renderSearch(overrides = {}) {
     overrides.notice ?? '',
     overrides.actionError ?? '',
     overrides.recent ?? { status: 'loading' },
+    overrides.writeText ?? '',
+    overrides.writeSource ?? '',
+    overrides.writeState ?? { status: 'idle' },
+    overrides.writeNotice ?? '',
   ];
   return searchTab === null ? [] : flattenTree(searchTab({ t }));
 }
@@ -1707,20 +1740,48 @@ const deepCountClass = (node, className) => {
 // 用户原话：「该页面中，搜索功能需位于最上方，顺便重新为搜索功能设计更舒适简洁的视觉」。
 // （这一段放在 `deepNodes` / `deepText` / `RECENT_ITEMS` 之后：它们都要用到。）
 const searchCardNode = (nodes) => nodes.find((node) => node.props?.title === t('tabSearch'));
-/** 找搜索框那一块（`.dshm-searchbar`，递归找，因为它在卡片的 children 里）。 */
+/** 顶部两列功能区容器（`.dshm-zones`）。 */
+const zonesNode = (nodes) => nodes.find((node) => node.props?.className === 'dshm-zones');
+/**
+ * 容器里的功区 / 展开面板。
+ *
+ * ⚠️ 不能读 `zonesNode.children`：`flattenTree` 遇到数组 children 会**把它展平进父节点**，
+ * 于是那个节点的 `children[0]` 是数组本身、不是元素。这里改成**按类名过滤整页扁平数组**
+ * （`flattenTree` 保持文档顺序，所以顺序仍然可靠）。
+ */
+const classNameOf = (node) => (typeof node?.props?.className === 'string' ? node.props.className : '');
+/** 功区卡：类名的**第一个**是 `dshm-zone`（`dshm-zone is-open` 也算）。 */
+const isZoneCard = (node) => classNameOf(node).split(/\s+/)[0] === 'dshm-zone';
+const allZoneCards = (nodes) => nodes.filter(isZoneCard);
+const allZonePanels = (nodes) =>
+  nodes.filter((n) => classNameOf(n).split(' ').some((c) => c === 'dshm-zone-panel'));
+const zoneAt = (nodes, i) => allZoneCards(nodes)[i];
+const searchZone = (nodes) => zoneAt(nodes, 0);
+const writeZone = (nodes) => zoneAt(nodes, 1);
+const zonePanels = (nodes) => allZonePanels(nodes);
+/** 某一个功区里的那层内边距容器（标题/搜索框都在里面）。 */
+const zoneBody = (zone) => deepNodes(zone?.children ?? null).find((n) => classNameOf(n) === 'dshm-zone-body');
+/** 找搜索框那一块（`.dshm-searchbar`，递归找，因为它在功区的 children 里）。 */
 const searchBarNode = (nodes) => deepNodes(nodes).find((node) => node.props?.className === 'dshm-searchbar');
 const searchIdlePage = renderSearch({
   recent: { status: 'ready', data: { ok: true, count: 2, items: RECENT_ITEMS } },
 });
 const searchReadyPage = renderSearch({ state: { status: 'ready', data: { items: [SEARCH_ITEM], count: 1, tookMs: 3 } } });
 check(
-  '搜索页：搜索框是页面**第一眼** —— 搜索卡排在最前，且卡里第一块就是搜索框',
+  '搜索页：搜索框是页面**第一眼** —— 顶部第一块就是「搜索」功区，且搜索框在它里面',
   (() => {
-    const first = searchIdlePage.find((node) => typeof node.props?.title === 'string' && node.props.title !== '');
-    const card = searchCardNode(searchIdlePage);
-    return card !== undefined && first === card && card.children?.[0]?.props?.className === 'dshm-searchbar';
+    const zones = zonesNode(searchIdlePage);
+    const sz = searchZone(searchIdlePage);
+    // ⚠️ `searchIdlePage[0]` 是 **Fragment 节点**（没有 className），所以判据是
+    // 「zones 是第一个**带类名**的节点」而不是「数组第 0 个」。
+    const firstClassy = searchIdlePage.find((n) => classNameOf(n) !== '');
+    const titleOk = deepNodes(sz?.children ?? null).some(
+      (n) => classNameOf(n) === 'dshm-zone-title' && (n.children ?? []).includes(t('tabSearch')),
+    );
+    const barOk = deepNodes(sz?.children ?? null).some((n) => classNameOf(n) === 'dshm-searchbar');
+    return zones !== undefined && firstClassy === zones && sz !== undefined && titleOk && barOk;
   })(),
-  JSON.stringify(searchIdlePage.filter((n) => typeof n.props?.title === 'string').map((n) => n.props.title)),
+  JSON.stringify(zonesNode(searchIdlePage)?.props?.className ?? null),
 );
 check(
   '搜索页：搜索框 = 放大镜（在输入框内左侧）+ 输入框 + 搜索按钮，语义是 role="search"',
@@ -1763,10 +1824,129 @@ check(
   }),
 );
 check(
-  '搜索页：等待中也画搜索卡（搜索框不会因为一次请求就消失）',
+  '搜索页：等待中也画搜索功区（搜索框不会因为一次请求就消失）',
   (() => {
     const loading = renderSearch({ state: { status: 'loading' } });
-    return searchCardNode(loading) !== undefined && searchBarNode(loading) !== undefined;
+    return zonesNode(loading) !== undefined && searchZone(loading) !== undefined && searchBarNode(loading) !== undefined;
+  })(),
+);
+
+// ── 搜索页：顶部两大功能区（左：搜索 / 右：写入记忆）+「下沿打开」的融合边框 ─────
+// 用户 2026-10-09 第三轮口径（原话）：「把顶部划分为两块功能区域，搜索功能放在左边，右边
+// 我还想放一个功能」「当搜索功能启动时，画面底部展开遮住原本区域…此时搜索功能区和搜索结果区
+// 的边框是融合的、连贯的，关闭搜索功能时边框是方正的」「右边的功能区启动时也会有这样的效果」。
+// 功能选址由用户拍板 = **写入记忆**（左找右记）。
+const writeCollapsedPage = renderSearch({
+  recent: { status: 'ready', data: { ok: true, count: 2, items: RECENT_ITEMS } },
+});
+check(
+  '搜索页：顶部是两列功区 —— 左「搜索」右「写入记忆」，两块都在、都被列进容器',
+  (() => {
+    const cards = allZoneCards(writeCollapsedPage);
+    return (
+      cards.length === 2 &&
+      searchZone(writeCollapsedPage) !== undefined &&
+      writeZone(writeCollapsedPage) !== undefined &&
+      deepText(zoneBody(searchZone(writeCollapsedPage))?.children ?? null).includes(t('tabSearch')) &&
+      deepText(zoneBody(writeZone(writeCollapsedPage))?.children ?? null).includes(t('writeTitle'))
+    );
+  })(),
+  JSON.stringify(allZoneCards(writeCollapsedPage).map((n) => ({ c: classNameOf(n), text: deepText(zoneBody(n)?.children ?? null).slice(0, 2) }))),
+);
+check(
+  '搜索页：都没启动时**没有展开面板**，两卡都不是 is-open（边框方正）',
+  allZonePanels(writeCollapsedPage).length === 0 &&
+    classNameOf(searchZone(writeCollapsedPage)) === 'dshm-zone' &&
+    classNameOf(writeZone(writeCollapsedPage)) === 'dshm-zone',
+  JSON.stringify([classNameOf(searchZone(writeCollapsedPage)), classNameOf(writeZone(writeCollapsedPage))]),
+);
+check(
+  '搜索页：搜索启动 → 启动的那一卡带 is-open、面板紧跟其后（下沿打开、边框融合）',
+  (() => {
+    const cards = allZoneCards(searchReadyPage);
+    const panels = allZonePanels(searchReadyPage);
+    // 顺序必须是 [搜索卡(is-open), 结果面板, 写入卡] —— 面板夹在启动卡后面才连得上。
+    return (
+      classNameOf(searchZone(searchReadyPage)) === 'dshm-zone is-open' &&
+      classNameOf(writeZone(searchReadyPage)) === 'dshm-zone' &&
+      cards.length === 2 &&
+      panels.length === 1 &&
+      searchReadyPage.indexOf(searchZone(searchReadyPage)) <
+        searchReadyPage.indexOf(panels[0]) &&
+      searchReadyPage.indexOf(panels[0]) < searchReadyPage.indexOf(writeZone(searchReadyPage))
+    );
+  })(),
+  JSON.stringify(allZoneCards(searchReadyPage).map((n) => classNameOf(n))),
+);
+check(
+  '搜索页：写入启动 → 同样只有右侧那卡 is-open + 一个面板，且**一次只开一个**（互斥）',
+  (() => {
+    const writeOpen = renderSearch({ writeText: '要记的一条', recent: { status: 'ready', data: { ok: true, count: 0, items: [] } } });
+    const cards = allZoneCards(writeOpen);
+    const panels = allZonePanels(writeOpen);
+    return (
+      classNameOf(writeZone(writeOpen)) === 'dshm-zone is-open' &&
+      classNameOf(searchZone(writeOpen)) === 'dshm-zone' &&
+      cards.length === 2 &&
+      panels.length === 1 &&
+      writeOpen.indexOf(writeZone(writeOpen)) < writeOpen.indexOf(panels[0])
+    );
+  })(),
+);
+check(
+  '搜索页：写入面板 = 原文 textarea + 来源输入 + 「存进记忆」按钮；收起时**一个控件都不画**',
+  (() => {
+    const writeOpen = renderSearch({ writeText: '要记的一条' });
+    const panel = zonePanels(writeOpen)[0];
+    const panelNodes = deepNodes(panel.children);
+    const ta = panelNodes.find((n) => n.type === 'textarea');
+    const src = panelNodes.find((n) => n.type === fakePrimitives.Input);
+    return (
+      ta !== undefined &&
+      ta.props.value === '要记的一条' &&
+      src !== undefined &&
+      src.props.placeholder === t('writeSourcePlaceholder') &&
+      deepCountText(panel.children, t('writeSave')) === 1 &&
+      // 收起时（writeText 为空）面板根本不存在，自然一个控件都没有。
+      zonePanels(renderSearch({}))[0] === undefined
+    );
+  })(),
+  JSON.stringify(deepNodes(zonePanels(renderSearch({ writeText: '要记的一条' }))[0]?.children ?? null).map((n) => n.type).slice(0, 8)),
+);
+check(
+  '搜索页：写入面板的「存进记忆」在没写东西时是禁用的（没内容没有可存的）',
+  (() => {
+    // `writeText` 只有空白 → 面板不开（`writing` 为假，`trim()` 后没有内容）；
+    // 所以这里直接检查**组件源里的禁用条件**，再加一条真渲染的对照。
+    const typed = renderSearch({ writeText: '有内容' });
+    const btnTyped = deepNodes(zonePanels(typed)[0]?.children ?? null).find((n) => (n.children ?? []).includes(t('writeSave')));
+    return (
+      btnTyped !== undefined &&
+      btnTyped.props.disabled === false &&
+      /disabled: writeState\.status === 'busy' \|\| !writeDirty/.test(source)
+    );
+  })(),
+  '（writeDirty = writeText.trim() !== ""，空白时按钮禁用、面板也不展开）',
+);
+check(
+  '搜索页：写入成功后输入清空、面板收起，但那句「已写入」**留在功区下方**（不会被收起来的面板一起带走）',
+  (() => {
+    const saved = renderSearch({ writeNotice: t('writeOk') });
+    // 面板已收起（没有草稿），提示仍在页面扁平树里。
+    // ⚠️ 不能用 `deepCountText`：它会把 div 与它的字符串子节点各算一次（同一句话 count=2）。
+    const notice = saved.find((n) => classNameOf(n) === 'dshm-write-ok');
+    return zonePanels(saved).length === 0 && notice !== undefined && notice.children?.[0] === t('writeOk');
+  })(),
+  JSON.stringify(deepText(zonePanels(renderSearch({ writeNotice: t('writeOk') }))[0]?.children ?? null)),
+);
+check(
+  '搜索页：写入失败**保留草稿**并如实报原因（绝不把用户刚写的字弄丢）',
+  (() => {
+    const failed = renderSearch({ writeText: '写了一半', writeState: { status: 'error', message: 'HTTP 500：响应不是 JSON' } });
+    const panel = zonePanels(failed)[0];
+    const ta = deepNodes(panel?.children ?? null).find((n) => n.type === 'textarea');
+    const texts = deepText(panel?.children ?? null);
+    return ta !== undefined && ta.props.value === '写了一半' && texts.some((x) => String(x).includes('HTTP 500'));
   })(),
 );
 
