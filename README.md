@@ -103,6 +103,36 @@ Invoke-WebRequest -SkipHttpErrorCheck 'http://127.0.0.1:19387/api/dsh-memory/sta
 
 ---
 
+## 上传 / 版本管理（仓库与数据的边界）
+
+**铁律：记忆数据永不入库。** 本仓库只放代码、文档与 `lib/` 构建产物（连同本 README 在内约 52 个文件 / 1.8 MB）；
+记忆数据（`memory.db`、`memories.jsonl`、导出包、退役快照）住在仓库**外**的
+`<DSH 工作区>/dsh-memory-data/`，`.gitignore` 里也写死了这些名字（`.migration/` / `.import/` /
+`.retired/` / `.install/` / `*.db` / `*.jsonl`）。
+
+> ⚠️ 克隆回来能**跑插件**，但**没有记忆** —— 记忆靠 `memory_import` 从导出包恢复（见上面「导出 / 导入」）。
+
+**推送到 GitHub（本机实测口径）**：本机 git 默认的 `schannel` TLS 后端**发不出去**
+（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`，走不走代理都一样），
+换 **openssl** 后端即通：
+
+```powershell
+# 1) 干净 remote（不含凭据）
+git remote add origin https://github.com/<你的账号>/<仓库>.git
+# 2) 推送时临时喂 token，且指定 openssl 后端 —— token 不落 .git/config、不进凭据管理器
+$env:GIT_TERMINAL_PROMPT = '0'
+$env:GH_TOKEN = '<你的 PAT>'
+git -c http.sslBackend=openssl -c credential.helper= push `
+  "https://x-access-token:$env:GH_TOKEN@github.com/<你的账号>/<仓库>.git" main:main
+Remove-Item Env:GH_TOKEN
+```
+
+- 只要照抄 `-c http.sslBackend=openssl` 这一项即可；**不要**把 token 写进 remote URL 后 `git remote add`，
+  否则它会留在 `.git/config` 里。
+- 细粒度 PAT（`github_pat_…`）只支持 HTTPS，**不能走 SSH**。
+
+---
+
 ## 工具（15 个）
 
 | 工具 | 什么时候用 |
