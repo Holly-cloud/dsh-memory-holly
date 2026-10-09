@@ -145,7 +145,7 @@
 
 | # | 原型证据 | 新实现 | 判据 |
 |---|---|---|---|
-| ~~1~~ | `palace_lib.py`（切块）+ `sync_palace.py`（增量）+ `/api/ingest`·`/api/sync` + MCP `memory_sync` | **2026-10-06 当晚退役**（用户判定无用）。曾实现为 `src/host/palace.js` + `memory_palace` 工具 + `/palace` 路由；已从代码/工具/路由/面板/配置/文档中清除，归档在 `.retired/palace/`（含模块、测试与所有被改动文件的完整快照）。**退役理由**：宫殿是**一次性引导**——605 条内容导出并导入完成后，库就是唯一源，磁盘上也没有宫殿 md，「以磁盘源为准的同步器」没有活干 | 退役时的判据（仍留在归档里）：`test/palace.test.js` 9 例 + 服务层 1 例；其中「采纳闸门」是验收时真实库副本上抓出来的：一个合成文件匹配到 79 条真实热区记忆，没有闸门就会删掉重灌 |
+| ~~1~~ | `palace_lib.py`（切块）+ `sync_palace.py`（增量）+ `/api/ingest`·`/api/sync` + MCP `memory_sync` | **2026-10-06 当晚退役**（用户判定无用）。曾实现为 `src/host/palace.js` + `memory_palace` 工具 + `/palace` 路由；已从代码/工具/路由/面板/配置/文档中清除，归档在 `<DSH 工作区>/dsh-memory-data/.retired/palace/`（**不在本仓库内**，含模块、测试与所有被改动文件的完整快照）。**退役理由**：宫殿是**一次性引导**——605 条内容导出并导入完成后，库就是唯一源，磁盘上也没有宫殿 md，「以磁盘源为准的同步器」没有活干 | 退役时的判据（仍留在归档里）：`test/palace.test.js` 9 例 + 服务层 1 例；其中「采纳闸门」是验收时真实库副本上抓出来的：一个合成文件匹配到 79 条真实热区记忆，没有闸门就会删掉重灌 |
 | 2 | `POST /api/embed/rebuild`（后台 + 进度 + 原地覆盖） | `startBackfill({mode:'all'})` + `/backfill {mode}` | `test/maintenance.test.js`「把被改坏的向量修回来」：`missing` 修不掉、`all` 修得掉 |
 | 3 | `DELETE /v1/memories/{id}` 真删 | `memory_forget {hard:true}` + `/forget {hard}` | 同文件「默认软删、hard 真删且 history 留痕」 |
 | 4 | `/api/backup`（可读导出 + Qdrant 快照，留最近 3 份） | `backupNow` / `memory_backup` / `/backup`：**`VACUUM INTO` 在线一致性快照** + 文本包，留最近 N 份 | 同文件「库本体快照 + 文本包，且只保留最近 N 份」 |
