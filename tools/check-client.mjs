@@ -472,6 +472,38 @@ check(
     !/\.dshm-title\{[^}]*font-size:var\(--dsw-font-m-18/.test(styleNode.textContent) &&
     !/\.dshm-cardtitle\{font-weight:500\}/.test(styleNode.textContent),
 );
+// 搜索框重做（2026-10-09）加一条**样式守卫**：视觉只许用主题 token，且照平台写法。
+// 写死颜色在深色模式下就是瞎猜；编造的 `--dsw-font-*` 会静默失效（白名单那条已拦）。
+const searchbarCss = styleNode.textContent.match(/\.dshm-searchbar\{[^}]*\}/)?.[0] ?? '';
+const searchbarFieldCss = styleNode.textContent.match(/\.dshm-searchbar-field\{[^}]*\}/)?.[0] ?? '';
+const searchbarIconCss = styleNode.textContent.match(/\.dshm-searchbar-icon\{[^}]*\}/)?.[0] ?? '';
+// 平台那条关键的覆盖写法（`.searchField>:first-child{padding:0}`）我们也必须照做：
+// 否则输入框自己的左右内边距会与图标叠加，文字被挤、图标贴边。
+const searchbarInnerCss =
+  styleNode.textContent.match(/\.dshm-searchbar-field>input,\.dshm-searchbar-field>div\{[^}]*\}/)?.[0] ?? '';
+check(
+  '搜索框样式：外框「描边 + 圆角 + flex + 内边距」，且输入框本体的内边距被清零（照平台 .searchField 的做法）',
+  searchbarCss !== '' &&
+    searchbarFieldCss !== '' &&
+    /display:flex/.test(searchbarFieldCss) &&
+    /align-items:center/.test(searchbarFieldCss) &&
+    /border:\.5px solid var\(--dsw-alias-border-l2\)/.test(searchbarFieldCss) &&
+    /border-radius:12px/.test(searchbarFieldCss) &&
+    /padding:0 12px/.test(searchbarFieldCss) &&
+    /padding:0\}/.test(searchbarInnerCss) &&
+    // 图标是 span，**不能**被 `flex:1` 拉长（选择器刻意只写 input / div）。
+    !/\.dshm-searchbar-field>\*/.test(styleNode.textContent),
+  `inner="${searchbarInnerCss}"`,
+);
+check(
+  '搜索框样式：颜色**没有写死**（一律走 --dsw-alias-*，深浅色自动跟随）；图标不参与拉伸',
+  searchbarIconCss !== '' &&
+    /flex:none/.test(searchbarIconCss) &&
+    /--dsw-alias-label-secondary/.test(searchbarIconCss) &&
+    ![searchbarCss, searchbarFieldCss, searchbarIconCss].some((css) =>
+      /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|\b(white|black|red|blue|gray|grey)\b/.test(css),
+    ),
+);
 check(
   '默认页是「仓管」；「指标格」这种东西整块不存在（组件与 CSS 都已删，不许复活）',
   (() => {
@@ -1671,6 +1703,73 @@ const deepCountClass = (node, className) => {
   })(node);
   return out.length;
 };
+// ── 搜索页：搜索框必须在最上方，且视觉只用已核对 token（2026-10-09） ───────────
+// 用户原话：「该页面中，搜索功能需位于最上方，顺便重新为搜索功能设计更舒适简洁的视觉」。
+// （这一段放在 `deepNodes` / `deepText` / `RECENT_ITEMS` 之后：它们都要用到。）
+const searchCardNode = (nodes) => nodes.find((node) => node.props?.title === t('tabSearch'));
+/** 找搜索框那一块（`.dshm-searchbar`，递归找，因为它在卡片的 children 里）。 */
+const searchBarNode = (nodes) => deepNodes(nodes).find((node) => node.props?.className === 'dshm-searchbar');
+const searchIdlePage = renderSearch({
+  recent: { status: 'ready', data: { ok: true, count: 2, items: RECENT_ITEMS } },
+});
+const searchReadyPage = renderSearch({ state: { status: 'ready', data: { items: [SEARCH_ITEM], count: 1, tookMs: 3 } } });
+check(
+  '搜索页：搜索框是页面**第一眼** —— 搜索卡排在最前，且卡里第一块就是搜索框',
+  (() => {
+    const first = searchIdlePage.find((node) => typeof node.props?.title === 'string' && node.props.title !== '');
+    const card = searchCardNode(searchIdlePage);
+    return card !== undefined && first === card && card.children?.[0]?.props?.className === 'dshm-searchbar';
+  })(),
+  JSON.stringify(searchIdlePage.filter((n) => typeof n.props?.title === 'string').map((n) => n.props.title)),
+);
+check(
+  '搜索页：搜索框 = 放大镜（在输入框内左侧）+ 输入框 + 搜索按钮，语义是 role="search"',
+  (() => {
+    const bar = searchBarNode(searchIdlePage);
+    if (bar === undefined) return false;
+    const field = (bar.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-field');
+    const iconSpan = (field?.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-icon');
+    const input = (field?.children ?? []).find((node) => node.type === fakePrimitives.Input);
+    const actions = (bar.children ?? []).find((node) => node.props?.className === 'dshm-searchbar-actions');
+    return (
+      bar.props.role === 'search' &&
+      iconSpan !== undefined &&
+      input !== undefined &&
+      input.props.placeholder === t('searchPlaceholder') &&
+      input.props['aria-label'] === t('search') &&
+      actions !== undefined &&
+      deepCountText(actions, t('search')) === 1
+    );
+  })(),
+  JSON.stringify(searchBarNode(searchIdlePage)?.children?.map((n) => n.props?.className ?? n.type) ?? null),
+);
+check(
+  '搜索页：搜索栏里没有多余的「关键词建议」长句（建议移到 placeholder 与 idle 提示，不常驻占位）',
+  (() => {
+    const bar = searchBarNode(searchIdlePage);
+    if (bar === undefined) return false;
+    return !deepText(bar.children).some((text) => String(text).includes('LIKE') || String(text).includes('≥3'));
+  })(),
+  JSON.stringify(deepText(searchBarNode(searchIdlePage)?.children ?? null)),
+);
+check(
+  '搜索页：**正在搜 / 搜出结果时不再画「最近入库」** —— 页面不该同时堆两块列表',
+  (() => recentCardNode(searchReadyPage) === undefined &&
+    recentCardNode(renderSearch({ state: { status: 'loading' } })) === undefined &&
+    recentCardNode(searchIdlePage) !== undefined)(),
+  JSON.stringify({
+    searchingHasRecent: recentCardNode(searchReadyPage) !== undefined,
+    idleHasRecent: recentCardNode(searchIdlePage) !== undefined,
+  }),
+);
+check(
+  '搜索页：等待中也画搜索卡（搜索框不会因为一次请求就消失）',
+  (() => {
+    const loading = renderSearch({ state: { status: 'loading' } });
+    return searchCardNode(loading) !== undefined && searchBarNode(loading) !== undefined;
+  })(),
+);
+
 const recentCollapsed =
   attempt('浅渲染搜索页（最近入库：未展开）不抛错', () =>
     renderSearch({ recent: { status: 'ready', data: { ok: true, limit: 10, count: 2, items: RECENT_ITEMS } } }),
