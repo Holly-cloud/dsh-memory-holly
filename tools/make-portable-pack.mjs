@@ -270,6 +270,10 @@ function render(template, values) {
 /**
  * 把包内所有文件（除 MANIFEST 与 zip 自身）算成清单。
  *
+ * ⚠ `.git/` **不进清单**：git 内部文件（尤其 `index`）会被任何一次 `git status` 改写，
+ * 把它们写进 sha256 清单只会造成「收包方第一次跑 git 就报包损坏」的假警报。
+ * git 对象本身有内容寻址校验（`git fsck`），不需要我们再抄一遍。
+ *
  * @param {string} root 包根目录
  * @param {string[]} exclude 额外排除的相对路径
  * @returns {{ path: string, bytes: number, sha256: string }[]} 清单
@@ -279,6 +283,7 @@ function manifestOf(root, exclude) {
   return listFiles(root)
     .map((file) => ({ abs: file, rel: relative(root, file).split(sep).join('/') }))
     .filter((entry) => !skip.has(entry.rel))
+    .filter((entry) => !entry.rel.startsWith('.git/') && !entry.rel.includes('/.git/'))
     .map((entry) => ({ path: entry.rel, bytes: statSync(entry.abs).size, sha256: sha256(entry.abs) }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
@@ -541,6 +546,9 @@ export async function buildPackage(config) {
     installCommand: 'node 1-plugin/dsh-memory/tools/install.mjs',
     upstream: 'https://github.com/Holly-cloud/dsh-memory-holly',
     files: manifestOf(config.out, ['MANIFEST.json']),
+    notes: [
+      '.git/ 的内部文件（含 index）不逐条列 sha256：任何一次 git 命令都会改写 index，列进去会造成假警报；git 对象由 git 自身校验。',
+    ],
   };
   writeFileSync(join(config.out, 'MANIFEST.json'), JSON.stringify(manifest, null, 2), 'utf8');
 

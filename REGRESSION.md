@@ -2871,6 +2871,15 @@ sideJob 各存各的、两条线并发接同一组只有一个拿得到）；客
   记忆 1374 / 向量 1433 / 待审 2 / 变更单 2 / 副审阅区 3 / 设置 6、`missing vectors = 0`、
   关键词检索能命中、`journal_mode` 变回 `wal`。
 
+### 第二个出包后才暴露的问题：把 `.git/index` 也算进了 sha256 清单
+
+- 现象：复核完顺手在包内跑了一次 `git status`，再跑 `VERIFY.mjs` → `MANIFEST 里 … 坏 1 个`。
+- 根因：`git status` 会刷新 `.git/index` 的 stat 缓存 —— 而清单把它当普通文件算了 sha256。
+  收包方**只要看一眼 git 状态**，就会看到「包损坏」的假警报。
+- 改法：`manifestOf()` 与 `VERIFY.mjs` 都排除 `.git/` 内部（git 对象自带内容寻址校验，
+  `git fsck` 比我们抄一遍更权威）；`MANIFEST.notes` 与包 README 里写明这一点。
+- 代价：`.git` 里的字节不再被清单覆盖 —— 但它本来就不是「部署必需物」，坏了也能从 GitHub 重新 clone。
+
 ### 如实边界
 
 ① **没有在「另一台真设备」上验证过**：只在本机用模拟 `DSH_HOME` + 空目录验证了安装/还原/卸载；

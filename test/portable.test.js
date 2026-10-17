@@ -259,8 +259,12 @@ function makeFixtureDb(dir) {
 test('端到端：打包 → 快照还原 → 合并还原 → 幂等重跑', async () => {
   const fixture = makeFixtureDb(join(TMP, 'fixture'));
   const out = join(BUILD_ROOT, 'pkg');
-  const built = await buildPackage({ out, db: fixture.dbPath, label: 'test-pack', withGit: false, withZip: true, force: true });
+  const built = await buildPackage({ out, db: fixture.dbPath, label: 'test-pack', withGit: true, withZip: true, force: true });
   const packageDir = join(out, '2-personal-data');
+
+  // 清单覆盖除 .git 以外的全部文件（.git/index 会被任何一次 git 命令改写，列进去只会造成假警报）
+  assert.equal(built.manifest.files.some((entry) => entry.path.startsWith('.git/') || entry.path.includes('/.git/')), false);
+  assert.equal(existsSync(join(out, '1-plugin', 'dsh-memory', '.git')), true);
 
   // 目录形状
   for (const rel of ['README.md', 'INSTALL.md', 'AGENT-HANDOFF.md', 'MANIFEST.json', 'VERIFY.mjs', '1-plugin/dsh-memory/lib/index.js', '2-personal-data/data/counts.json', '2-personal-data/tools/restore.mjs']) {

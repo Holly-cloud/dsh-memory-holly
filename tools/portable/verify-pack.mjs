@@ -82,11 +82,13 @@ function main() {
   const counts = JSON.parse(readFileSync(countsFile, 'utf8'));
 
   // ── 1. MANIFEST 与实际文件 ────────────────────────────────────────────────────
-  const actual = listFiles(root).filter((rel) => rel !== 'MANIFEST.json');
+  // `.git/` 内部不进清单：任何一次 git 命令都会改写 index，列进去会造成「第一次跑 git 就报损坏」。
+  const isGitInternal = (rel) => rel.startsWith('.git/') || rel.includes('/.git/');
+  const actual = listFiles(root).filter((rel) => rel !== 'MANIFEST.json' && !isGitInternal(rel));
   const listed = new Map(manifest.files.map((entry) => [entry.path, entry]));
   const missingFromManifest = actual.filter((rel) => !listed.has(rel));
   const staleInManifest = [...listed.keys()].filter((rel) => !actual.includes(rel));
-  check(missingFromManifest.length === 0, `MANIFEST 覆盖全部 ${actual.length} 个文件（缺 ${missingFromManifest.length} 个）`);
+  check(missingFromManifest.length === 0, `MANIFEST 覆盖全部 ${actual.length} 个文件（缺 ${missingFromManifest.length} 个；.git 内部由 git 自校验）`);
   check(staleInManifest.length === 0, `MANIFEST 没有多余条目（多 ${staleInManifest.length} 个）`);
 
   let badHash = 0;

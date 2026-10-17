@@ -63,7 +63,7 @@ node 2-personal-data/tools/restore.mjs --mode verify     # 看目标机器现状
 ├─ README.md                  ← 你正在看的这份
 ├─ INSTALL.md                 ← **部署手册**（给 agent 的执行清单，含验收与排障）
 ├─ AGENT-HANDOFF.md           ← **开发交接**（项目现状、架构、铁律、下一步）
-├─ MANIFEST.json              ← 全量文件清单 + sha256 + 计数
+├─ MANIFEST.json              ← 文件清单 + sha256 + 计数（`.git` 内部除外，git 自校验）
 ├─ VERIFY.mjs                 ← 收包方自查：核对清单与快照库（只读）
 ├─ 1-plugin/dsh-memory/       ← 插件本体（含 .git，可直接继续开发）
 │  ├─ lib/                    ← 宿主入口 + 客户端面板（无构建，手写 bundle）
