@@ -140,11 +140,15 @@ export function verifyPackage(packageDir, counts) {
  */
 export function inspectTarget(dataDir) {
   const dbPath = join(dataDir, 'memory.db');
+  // ⚠ 必须在**打开之前**判断：只读连接打开 WAL 模式的库时，SQLite 会自己创建
+  // `-shm`（以及 0 字节的 `-wal`）。如果不记录「打开前有没有」，我们自己的探测
+  // 就会把目标库误判成「正被 DSH 打开」，让 snapshot/--force 路径永远走不通。
+  const walPresentBefore = existsSync(`${dbPath}-wal`) || existsSync(`${dbPath}-shm`);
   /** @type {ReturnType<typeof inspectTarget>} */
   const result = {
     dbExists: existsSync(dbPath),
     dbPath,
-    walPresent: existsSync(`${dbPath}-wal`) || existsSync(`${dbPath}-shm`),
+    walPresent: walPresentBefore,
     schemaVersion: null,
     memories: 0,
     memoriesTotal: 0,
@@ -197,6 +201,16 @@ export function inspectTarget(dataDir) {
     } catch {
       /* 关不掉不是错 */
     }
+    // 清掉「只是我们这次只读探测留下的」派生文件；打开前就存在的不动（那才是 DSH 在用的证据）。
+    if (!walPresentBefore) {
+      for (const suffix of ['-wal', '-shm']) {
+        try {
+          if (existsSync(`${dbPath}${suffix}`)) rmSync(`${dbPath}${suffix}`, { force: true });
+        } catch {
+          /* 删不掉就留着：下次判断会更保守，不会更危险 */
+        }
+      }
+    }
   }
   return result;
 }
@@ -239,18 +253,36 @@ export function isEmptyTarget(target) {
 }
 
 /**
- * 从 patch 文件里读 `dataDir`（只认 dsh-memory 块里的那一行）。
+ * 从 patch 文件里读 `dataDir`（**只认 dsh-memory 自己那块里的那一行**）。
+ *
+ * 为什么要认块：patch 里可能有别的插件也写 `dataDir:`（它们的数据目录跟本插件无关）。
+ * 早先的实现是全文件找第一个 `dataDir:` —— 实测在「另一个插件块排前面」时会认错目录，
+ * 于是还原落到别人的数据目录、而安装器写的是 `$DSH_HOME/dsh-memory`，面板里 0 条记忆。
+ *
+ * 块规则与安装器一致：从 `# dsh-memory` 开头的 marker 行起，到第一条「零缩进且不是
+ * `- ...` / 注释 / 空行」的行为止（那就是下一条 patch 条目）。块内只认单引号写法。
  *
  * 这里刻意**不 import** `install-lib.mjs`：本文件会被原样拷进数据包
  * （`2-personal-data/tools/`），独立于插件目录运行；为了一个正则再拖一个模块进来不划算。
- * 写法上要求 `dataDir:` 后跟单引号 —— 安装器与手工配置都这么写；读不到就回落默认值。
  *
  * @param {string} text patch 全文
  * @returns {string | null} dataDir 或 null
  */
 export function parsePatchDataDir(text) {
-  const match = String(text ?? '').match(/^\s*dataDir:\s*'([^']+)'/m);
-  return match === null ? null : match[1];
+  const lines = String(text ?? '').split(/\r?\n/);
+  let inside = false;
+  for (const line of lines) {
+    if (!inside) {
+      if (/^#\s*dsh-memory\b/.test(line)) inside = true;
+      continue;
+    }
+    // 块内：数据目录那一行
+    const match = line.match(/^\s+dataDir:\s*'([^']+)'/);
+    if (match !== null) return match[1];
+    // 块结束：零缩进、非空、非注释、且不是 `- insert:` / `- id:` 这类条目行
+    if (line.trim() !== '' && !/^\s/.test(line) && !/^\s*#/.test(line) && !/^-\s/.test(line)) inside = false;
+  }
+  return null;
 }
 
 /**
@@ -335,7 +367,7 @@ async function loadPlugin(pluginDir) {
  *   force: boolean, log: (line: string) => void }} input 入参
  * @returns {{ backup: string | null, actions: string[], after: ReturnType<typeof inspectTarget> }} 结果
  */
-function restoreSnapshot({ packageDir, dataDir, counts, dryRun, log }) {
+function restoreSnapshot({ packageDir, dataDir, counts, dryRun, force, log }) {
   const source = join(packageDir, 'data', 'memory.db');
   if (!existsSync(source)) throw new RestoreError('NO_SNAPSHOT', `找不到快照：${source}`);
   const target = inspectTarget(dataDir);
@@ -347,7 +379,7 @@ function restoreSnapshot({ packageDir, dataDir, counts, dryRun, log }) {
         '两条路：① 完全退出 DSH，重跑本脚本；② 不关 DSH，改用 --mode merge（合并导入，不替换文件）。',
     );
   }
-  if (target.dbExists && !isEmptyTarget(target)) {
+  if (target.dbExists && !isEmptyTarget(target) && force !== true) {
     throw new RestoreError(
       'TARGET_NOT_EMPTY',
       `目标库已有数据（${target.memories} 条记忆）。快照替换会覆盖它。\n` +
@@ -767,7 +799,7 @@ export async function restorePersonalData({
       // decideMode 不会在非空目标上选 snapshot（除非显式）；显式 snapshot 时由这里要求 --force
       throw new RestoreError('TARGET_NOT_EMPTY', '目标库非空：快照替换会覆盖它。确认要覆盖请加 --force。');
     }
-    const result = restoreSnapshot({ packageDir: packageRoot, dataDir: targetDir, counts, dryRun, log: logLine });
+    const result = restoreSnapshot({ packageDir: packageRoot, dataDir: targetDir, counts, dryRun, force, log: logLine });
     actions = result.actions;
     stats = {
       memoriesActive: result.after.memories,

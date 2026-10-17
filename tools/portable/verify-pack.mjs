@@ -11,7 +11,7 @@
  * @module dsh-memory/tools/portable/verify-pack
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -105,6 +105,7 @@ function main() {
   check(!existsSync(`${dbFile}-wal`) && !existsSync(`${dbFile}-shm`), '快照库旁边没有残留 -wal / -shm');
   if (existsSync(dbFile)) {
     check(counts.files?.['data/memory.db']?.sha256 === sha256(dbFile), 'counts.json 里的 memory.db sha256 与实际一致');
+    const walBefore = existsSync(`${dbFile}-wal`) || existsSync(`${dbFile}-shm`);
     const db = new DatabaseSync(dbFile, { readOnly: true });
     try {
       const integrity = Object.values(db.prepare('PRAGMA integrity_check').get())[0];
@@ -124,6 +125,17 @@ function main() {
       check(one('SELECT COUNT(*) n FROM settings') === c.settings, `设置 ${c.settings} 项`);
     } finally {
       db.close();
+      // 只读打开 WAL 模式的库会生成 -shm（我们自己的探测痕迹）；打开前没有的话要清掉，
+      // 否则「连跑两次 VERIFY」第二次会误报「有残留 -wal/-shm」。
+      if (!walBefore) {
+        for (const suffix of ['-wal', '-shm']) {
+          try {
+            if (existsSync(`${dbFile}${suffix}`)) rmSync(`${dbFile}${suffix}`, { force: true });
+          } catch {
+            /* 删不掉不影响本次结论 */
+          }
+        }
+      }
     }
   }
 

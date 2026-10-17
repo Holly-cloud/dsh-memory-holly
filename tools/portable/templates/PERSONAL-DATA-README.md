@@ -5,18 +5,23 @@
 
 打包时间 {{DATETIME}} · 源提交 `{{COMMIT}}` · 数据库 schema v{{SCHEMA}}。
 
+> **命令写法**：下文用 Windows PowerShell 写法（`& $NODE` 表示用你找到的 Node 完整路径执行脚本，
+> 例如 `& 'C:\...\node.exe' 2-personal-data/tools/restore.mjs`）。PowerShell 里变量不能直接当命令，
+> 必须加 `&`；Linux/macOS 把 `& $NODE` 换成 `"$NODE"`。详见包根 `INSTALL.md` 开头的「命令写法」。
+
 ---
 
-## 1. 一条命令还原
+## 1. 一条命令还原（在**包根目录**执行）
 
-```bash
-$NODE tools/restore.mjs
+```powershell
+& $NODE 2-personal-data/tools/restore.mjs
 ```
 
-- `$NODE` = 一个带 `node:sqlite` 的 Node（≥ 24；DSH 自带运行时里一定有，见包根 `INSTALL.md` §1.1）；
 - 默认动作（`--mode auto`）：**目标库不存在 → 落快照**（最完整）；**目标已有数据或正被 DSH 打开 → 合并**
   （只增不改，按正文 sha256 判重）；
-- 写完自证：数字与 `data/counts.json` 里的期望对不上就非零退出，不会留一个「看起来成功」的半成品。
+- 写完自证：数字与 `data/counts.json` 里的期望对不上就非零退出，不会留一个「看起来成功」的半成品；
+- 目标目录默认取 `$env:DSH_HOME/dsh-memory`；若 patch 里已有 dsh-memory 块，会跟随块里的 `dataDir`
+  （**只认 dsh-memory 自己那块**，别的插件的 `dataDir` 不会被误认）。
 
 **推荐顺序**：先跑它、再装插件（插件一装就会打开库；趁没打开时落快照最干净）。
 
@@ -50,7 +55,7 @@ $NODE tools/restore.mjs
 | 向量 | **原样保留**（同模型同维度时开箱即用） | 不搬，按当前模型重算（面板「补齐」） |
 | 历史 / 已删记忆 | 保留 | 不搬（只搬未删除的正文） |
 | 待审条目 / 变更单 / 副审阅区 | 保留 | 保留（按原 id 写回；变更单里的记忆 id 会映射到新 id） |
-| 目标已有数据 | **会被覆盖**（需 `--force`，且自动备份旧库） | 只增不改，绝不覆盖 |
+| 目标已有数据 | **会被覆盖**（需 `--force`，且替换前自动备份旧库） | 只增不改，绝不覆盖 |
 | DSH 运行中能不能做 | **不能**（必须完全退出） | 能 |
 
 自动选择逻辑：
@@ -61,16 +66,18 @@ $NODE tools/restore.mjs
 其余                     → merge
 ```
 
-想强行指定：`--mode snapshot` / `--mode merge`。
+想强行指定：`--mode snapshot` / `--mode merge`；非空库要覆盖：
+`--mode snapshot --force`（旧库先备份成 `memory.db.before-restore-<时间戳>`）。
 
 ---
 
-## 4. 先看再做 / 只校验不写
+## 4. 先看再做 / 只校验不写（在包根目录执行）
 
-```bash
-$NODE tools/restore.mjs --dry-run          # 报告将做什么，不写一个字节
-$NODE tools/restore.mjs --mode verify      # 只校验包完整性 + 看目标现状
-$NODE tools/restore.mjs --json             # 机器可读结果（给 agent 解析）
+```powershell
+& $NODE 2-personal-data/tools/restore.mjs --dry-run         # 报告将做什么，不写一个字节
+& $NODE 2-personal-data/tools/restore.mjs --mode verify     # 只校验包完整性 + 看目标现状
+& $NODE 2-personal-data/tools/restore.mjs --json            # 机器可读结果（给 agent 解析）
+& $NODE VERIFY.mjs                                          # 整包核对：清单 sha256 + 快照库自洽
 ```
 
 `--mode verify` 预期输出里：**完整性 OK**，且「期望」一行与下面一致：
@@ -99,25 +106,25 @@ $NODE tools/restore.mjs --json             # 机器可读结果（给 agent 解�
 | 现象 | 处置 |
 |---|---|
 | `DB_OPEN` | DSH 正开着库。**完全退出 DSH** 再跑；或改用 `--mode merge`（可运行中做） |
-| `TARGET_NOT_EMPTY` | 目标库已有记忆。用 `--mode merge`；确认要覆盖才 `--mode snapshot --force`（会先备份） |
+| `TARGET_NOT_EMPTY` | 目标库已有记忆。用 `--mode merge`；确认要覆盖才 `--mode snapshot --force`（会先备份旧库再替换） |
 | `PACKAGE_CORRUPT` | 包在传输/解压中坏了：让对方重发。别自己改 `memories.jsonl` |
 | `VERIFY_FAILED` | 还原后数字对不上。先 `--mode verify` 看目标；若目标是全新设备，重解压再还原一次 |
 | `NO_PLUGIN`（merge 模式） | 找不到插件源码：确认 `../1-plugin/dsh-memory/` 在包里，或 `--plugin <路径>` |
 | 还原后搜不到（只有关键词） | 向量没补齐：概览页看 `missing`，点「补齐」 |
 | 想把数据也导回旧机器 | 同一个包，旧机器上 `--mode merge`（id 不同不影响检索；`meta.originalId` 可追溯） |
+| 待审条目/变更单没回来 | 只有 merge 会搬这些（按原 id 写回）；snapshot 是全库替换，本来就在 |
 
 ---
 
-## 7. 这个包是怎么生成的（可重现）
+## 7. 这个包是怎么生成的（可重现，在**插件仓库根目录**执行）
 
-在源机器上（插件仓库里）：
-
-```bash
-$NODE tools/make-portable-pack.mjs                    # 生成 ../release/<label>/ + .zip
-$NODE tools/make-portable-pack.mjs --no-git --no-zip   # 不上 .git、不打压缩包
+```powershell
+& $NODE tools/make-portable-pack.mjs                    # 生成 ../release/<label>/ + .zip
+& $NODE tools/make-portable-pack.mjs --no-git --no-zip  # 不上 .git、不打压缩包
 ```
 
 打包器出包前会自证：快照可读且数字与活库一致、文本包能无损导入空库、附属表计数一致、
-`src/host/*.js` 全部可 import、zip 回读一致、包里没有疑似密钥。任何一项不过就**拒绝出包**。
+`src/host/*.js` 全部可 import、zip 回读一致、包里没有疑似密钥、快照旁没有 `-wal/-shm`
+（出包前强制 checkpoint 并切回 `journal_mode=delete`）。任何一项不过就**拒绝出包**。
 
 日常备份（不是这个包）：面板「概览 → 一键备份」→ `<dataDir>/备份/backup-<时间戳>/`（SQLite 在线快照 + 文本包）。

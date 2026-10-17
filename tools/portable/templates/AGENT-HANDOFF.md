@@ -9,7 +9,8 @@
 ## 1. 一句话
 
 **dsh-memory 是 DSH 的原生本地记忆插件**：SQLite（FTS5 trigram 关键词 + 余弦向量语义，RRF 融合检索）
-+ 自带 Web 面板 + agent 侧 16 个工具 + 库外审阅门（抽取 → 待审 → 过审才落库）+ 仓管/副仓管两条整理线。
++ 自带 Web 面板 + agent 侧 15 个常驻工具（另有一个 `memory_selftest` 注册探针）
++ 库外审阅门（抽取 → 待审 → 过审才落库）+ 仓管/副仓管两条整理线。
 零第三方依赖、不联网也能跑（除嵌入/LLM 调用）。
 
 ## 2. 当前状态（打包时）
@@ -19,11 +20,11 @@
 | 源提交 | `{{COMMIT}}` {{COMMIT_SUBJECT}}（分支 `{{BRANCH}}`） |
 | 上游 | <https://github.com/Holly-cloud/dsh-memory-holly> |
 | schema | v{{SCHEMA}}（当前代码的 `SCHEMA_VERSION`；老库自动迁移） |
-| 插件文件 | {{PLUGIN_FILES}} 个（含 `.git`）· 仓库跟踪 51 个文件 |
+| 插件文件 | {{PLUGIN_FILES}} 个（含 `.git`）· 仓库跟踪 64 个文件 |
 | host 模块 | 18 个（`src/host/*.js`） |
 | 工具 | {{TOOL_COUNT}} 个常驻（`lib/index.js` 里注册；{{TOOL_PROBE}}） |
 | 面板路由 | 37 条（`src/host/panel.js` 表驱动，覆盖 39 个端点） |
-| 回归测试 | 19 个文件 / **372** 个用例（`node:test`，全过） |
+| 回归测试 | 19 个文件 / **373** 个用例（`node:test`，全过） |
 | 客户端自检 | **169** 条断言（`tools/check-client.mjs`，浅渲染，全过） |
 | 个人数据（本包） | 记忆 {{MEMORIES_ACTIVE}} 条（含已删共 {{MEMORIES_TOTAL}}）· 向量 {{VECTORS}} · 待审条目 {{BATCH_ITEMS}} · 变更单 {{PLANS}} · 副审阅区 {{HANDOFFS}} |
 
@@ -32,7 +33,7 @@
 ## 3. 代码地图
 
 ```
-lib/index.js        宿主入口：注册 16 个工具 + 面板路由 + 注入（Layer 0 常驻索引 / Layer 1 召回）
+lib/index.js        宿主入口：注册 15 个常驻工具（+1 个探针）+ 面板路由 + 注入（Layer 0 常驻索引 / Layer 1 召回）
 lib/client.js       Web 面板（手写、无构建的浏览器 bundle：h = React.createElement）
 src/host/db.js      node:sqlite 打开库 + DDL + schema 迁移（v1→v5）+ FTS5 触发器
 src/host/store.js   MemoryStore：记忆/向量/历史/批次/变更单/副审阅区/设置 的全部读写
@@ -53,13 +54,13 @@ src/host/panel.js   面板 HTTP 路由（表驱动；requestBody: 'buffered'；3
 src/host/portability.js 导出包 / 导入（按全文 hash 判重；文本是本体）
 src/host/timeout.js 超时包装
 tools/              安装器 / 自检 / 迁移包 / **便携打包器** / 收包自查 / 测试 runner
-test/               19 个 node:test 文件（372 用例）
+test/               19 个 node:test 文件（373 用例）
 ```
 
 ## 4. 铁律（改代码前先背下来）
 
 1. **记忆数据永不进仓库**。`.gitignore` 挡死 `*.db / *.db-wal / *.db-shm / *.jsonl / .migration/ / .import/ / .retired/ / .install/`。
-   数据住在仓库外（本机 `<DSH_HOME>/dsh-memory`，备份在 `dsh-memory-data/`）。
+   数据住在仓库外（本机 `<dataDir>`，默认 `<DSH_HOME>/dsh-memory`；插件内「一键备份」写在 `<dataDir>/备份/backup-<时间戳>/`）。
 2. **文本是本体，向量是派生物**。任何一套向量都可以整表删掉重算；导出包里从不带向量。
 3. **零第三方依赖**。宿主只用 `node:*`；客户端是手写 bundle，没有构建步骤。
 4. **UTF-8 无 BOM**。所有 `.js/.md` 必须无 BOM、无 U+FFFD；中文注释不许被 GBK 转坏
@@ -84,6 +85,8 @@ $NODE tools/install.mjs --dry-run      # 看安装会写什么
 $NODE tools/make-portable-pack.mjs     # 重新打便携包（默认 ../release/<label>/）
 $NODE tools/make-migration-pack.mjs    # 重新生成迁移包（文本包 + 冷备份）
 ```
+
+> Windows PowerShell 下每条命令写成 `& $NODE ...`（变量不能直接当命令）；环境变量用 `$env:DSH_HOME`。
 
 > ⚠️ 不要用 `node --test test/`：它会起子进程，在受限环境（DSH 沙箱/某些 Windows 策略）里
 > 会 `spawn EPERM`。`tools/run-tests.mjs` 就是为这个准备的，结果等价。

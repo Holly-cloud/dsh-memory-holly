@@ -4,7 +4,7 @@
  * 为什么需要这个包装：`node --test test/` 会**起子进程**跑每个测试文件；在受限环境里
  * （DSH 沙箱、某些 CI、某些 Windows 安全策略）子进程管道会被拒（`spawn EPERM`）。
  * 本脚本改成**同一个进程里按顺序 import 每个测试文件**，由 `node:test` 自己调度执行 ——
- * 不发子进程，任何能跑 Node 的地方都能跑，结果与 `node --test` 等价（357 个用例）。
+ * 不发子进程，任何能跑 Node 的地方都能跑，结果与 `node --test` 等价（当前 372 个用例）。
  *
  * 用法：
  *   node tools/run-tests.mjs            # 跑全部

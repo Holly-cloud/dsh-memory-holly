@@ -2880,6 +2880,38 @@ sideJob 各存各的、两条线并发接同一组只有一个拿得到）；客
   `git fsck` 比我们抄一遍更权威）；`MANIFEST.notes` 与包 README 里写明这一点。
 - 代价：`.git` 里的字节不再被清单覆盖 —— 但它本来就不是「部署必需物」，坏了也能从 GitHub 重新 clone。
 
+### 独立验收（另一个 agent 只读复核）抓出的 5 个阻塞问题 —— 全部修掉后重打
+
+用户要求交付前找独立验收。复核用的 agent 在「模拟 DSH_HOME + 临时目录」里把包装了又装，结论是
+**主链路可跑通，但文档里 3 条关键路径照做会失败 + 两个隐藏逻辑缺陷**。逐条：
+
+1. **`--mode snapshot --force` 永远失败**（功能缺陷）：
+   `restoreSnapshot()` 的参数里没有 `force`、内部对非空目标**无条件**抛 `TARGET_NOT_EMPTY`、
+   调用处也没传 —— 文档却在教用户用它。修：把 `force` 一路传进去，`force !== true` 才拒绝；
+   补用例：非空目标先拒绝、再 `--force` **成功替换且留下旧库备份**（备份里还能查出被覆盖的那条）。
+2. **`dataDir` 自动探测会认错目录**（静默落错数据）：
+   原实现全文件 grep 第一条 `dataDir:` —— patch 里别的插件若先写 `dataDir`，还原会落到别人的目录，
+   而安装器仍写 `$DSH_HOME/dsh-memory` → 面板 0 条。修：只认 `# dsh-memory` marker 起、到下一个
+   patch 条目为止**块内**的 `dataDir`；补用例（别的插件在前 + 本插件块在后 + 另有一条在最后）。
+3. **`$NODE ...` 在 Windows PowerShell 里是语法错误**：变量不能直接当命令，必须 `& $NODE`。
+   INSTALL 全文改写：开头单列「命令写法」两条规则，所有命令块改成 `& $NODE`；
+   个人数据 README 的相对路径也改成从包根执行（`2-personal-data/tools/restore.mjs`）。
+4. **`$DSH_HOME` 在 PowerShell 里是空字符串**：`ls "$DSH_HOME/profiles"` 实际查的是 `/profiles`，
+   永远 False。改成 `$env:DSH_HOME`（并给出 `$DSH_HOME = if ($env:DSH_HOME) …` 的写法）。
+5. **401 不能证明「路由已注册」**：DSH 在路由**之前**统一鉴权，任意 `/api/*`（含不存在的）都 401；
+   且 `-SkipHttpErrorCheck` 是 PowerShell 7 参数，Windows 自带 5.1 报「找不到参数」。
+   §4 验收改成「panel 能加载 + plugin_manager active + memory_stats 数字 + 搜索命中」，
+   并在文档里写明为什么不用 401 当证据。
+
+顺带修掉的小问题：`仓库跟踪 51→64`、备份路径写成 `<dataDir>/备份/`、工具口径统一成
+「15 个常驻 + 1 个探针」、`install.ps1`/`install.mjs` 措辞从「完全一致」改成「格式相同、互相认得」
+（marker 文案不同）、文档时间改用**本地时间带时区偏移**（不再显示 UTC 造成「刚打好」对不上）、
+`run-tests.mjs` 头注释 357→373、§0 情形 B 补上「DSH 开着时 auto 会退化成 merge，需要补向量」。
+
+**修完自证**：便携包用例 15→**16**、全量回归 **373/373 pass**；重打后逐项复核两个新守卫
+（`--force` 成功替换 + 备份、别的插件的 `dataDir` 不再被误认）；包内 `VERIFY.mjs` 连跑两次不再
+因为自己的只读探测留下 `-shm` 而误报（`inspectTarget` 现在记录「打开前有没有」并清掉自己造的派生文件）。
+
 ### 如实边界
 
 ① **没有在「另一台真设备」上验证过**：只在本机用模拟 `DSH_HOME` + 空目录验证了安装/还原/卸载；

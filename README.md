@@ -161,6 +161,10 @@ Remove-Item Env:GH_TOKEN
 
 - **auto 模式**：库不存在、或为空且没被 DSH 打开 → **落快照**（记忆 / 向量 / 历史 / 原 id 一字不差）；
   已有数据、或 DSH 正开着库 → **合并**（按正文 hash 判重，只增不改）；
+- 非空库要用快照覆盖必须**显式** `--mode snapshot --force`：替换前会先把旧库备份成
+  `memory.db.before-restore-<时间戳>`；不开 `--force` 一律拒绝（`TARGET_NOT_EMPTY`）；
+- DSH 正开着库（存在 `-wal/-shm`）时拒绝快照替换（`DB_OPEN`，旧 WAL 盖到新库会毁库），
+  此时改用 `--mode merge`；
 - `--mode verify` 只校验包完整性并显示目标现状；`--dry-run` 只报告不写库；
 - **包里永远没有密钥**（设置里只有 `apiKeyRef` 引用名），密钥到新机器在面板「设置」里重填一次。
 

@@ -68,7 +68,7 @@ node 2-personal-data/tools/restore.mjs --mode verify     # 看目标机器现状
 ├─ 1-plugin/dsh-memory/       ← 插件本体（含 .git，可直接继续开发）
 │  ├─ lib/                    ← 宿主入口 + 客户端面板（无构建，手写 bundle）
 │  ├─ src/host/               ← 18 个宿主模块
-│  ├─ test/                   ← 372 个用例（node:test）
+│  ├─ test/                   ← 373 个用例（node:test）
 │  ├─ tools/                  ← 安装器 / 自检 / 迁移包 / 便携打包器
 │  ├─ README.md DESIGN.md MIGRATION.md PHASE0.md REGRESSION.md
 │  └─ package.json .gitignore

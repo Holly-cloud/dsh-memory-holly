@@ -7,6 +7,22 @@
 包信息：`{{LABEL}}` · 打于 {{DATETIME}} · 源提交 `{{COMMIT}}` · schema v{{SCHEMA}} ·
 数据：记忆 {{MEMORIES_ACTIVE}} 条 / 待审条目 {{BATCH_ITEMS}} 条 / 变更单 {{PLANS}} 张 / 副审阅区 {{HANDOFFS}} 组。
 
+## 命令写法（先看这段，能省掉一半排障）
+
+下文命令块统一用 **Windows PowerShell** 写法。两条规则：
+
+1. **变量当命令必须加调用运算符 `&`**：
+
+   ```powershell
+   $NODE = 'C:\Users\你\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+   & $NODE VERIFY.mjs          # ✅ PowerShell
+   $NODE -v                    # ❌ 报 Unexpected token '-v'
+   ```
+
+2. **环境变量是 `$env:DSH_HOME`**（不是 `$DSH_HOME`；后者在 PowerShell 里是空字符串，检查会静默失败）。
+
+Linux / macOS 下把 `& $NODE` 换成 `"$NODE"`（或直接 `node`），把 `$env:DSH_HOME` 换成 `"$DSH_HOME"` 即可。
+
 ---
 
 ## §0 先判定你属于哪种情况（30 秒）
@@ -14,11 +30,13 @@
 | 情况 | 判定方法 | 你该走 |
 |---|---|---|
 | **A. 全新部署**（最常见） | 目标设备**没装过** dsh-memory | 全走 §1–§6 |
-| **B. 已装过插件，库是空的** | patch 里有 `id: memory`，但面板里 0 条记忆 | §1 → §2（脚本会自动选 snapshot）→ §3 跳过 → §4 |
+| **B. 已装过插件，库是空的** | patch 里有 `id: memory`，但面板里 0 条记忆 | §1 → §2（**DSH 完全退出**时脚本才选 snapshot）→ §3 跳过 → §4 |
 | **C. 已装过插件，且用户已有自己的记忆** | 面板里已有记忆 | §1 → §2.3 **merge**（只增不改，绝不覆盖）→ §3 跳过 → §4 |
 
 > 决定「能不能用快照覆盖」的只有一条：**库是不是空的、有没有被 DSH 打开**。
 > 还原脚本自己会判断，`--mode auto` 默认就是安全的；不确定时先跑 `--dry-run`。
+> ⚠️ 情况 B 如果 **DSH 正开着**（存在 `-wal/-shm`），auto 会退化成 **merge**：记忆条数对，
+> 但向量为 0、需要 §5.2 补齐。想要「开箱零缺失」，就先完全退出 DSH 再还原。
 
 ---
 
@@ -29,7 +47,7 @@
 本包所有脚本只用 Node 内置模块（`node:sqlite` 需要 Node ≥ 22.5，**推荐 24**）。
 先试系统里的：
 
-```bash
+```powershell
 node -v          # 期望 v24.x（v22.5+ 也行，但 v24 最稳）
 ```
 
@@ -45,23 +63,24 @@ Get-ChildItem "$env:USERPROFILE\.dsh\dsh-runtimes\*\dependencies\node\bin\node.e
 ls ~/.dsh/dsh-runtimes/*/dependencies/node/bin/node
 ```
 
-把它记成 `$NODE`（下文命令用 `$NODE` 代指，直接写完整路径也行）。
+把找到的完整路径赋给 `$NODE`（PowerShell 见文首「命令写法」；下文一律写 `& $NODE`）。
 
 ### 1.2 确认 DSH 已装好、并**至少启动过一次**
 
-```bash
+```powershell
 # DSH_HOME 默认：Windows %USERPROFILE%\.dsh；Linux/macOS ~/.dsh；设了 DSH_HOME 就用它
-ls "$DSH_HOME/profiles"        # 期望看到一个或多个 profile 目录（desktop / default / web …）
-ls "$DSH_HOME/profiles/<profile>/cordis.patch.yml"
+$DSH_HOME = if ($env:DSH_HOME) { $env:DSH_HOME } else { "$env:USERPROFILE\.dsh" }
+Get-ChildItem "$DSH_HOME\profiles"                                  # 期望有 desktop / default / web … 之一
+Test-Path "$DSH_HOME\profiles\desktop\cordis.patch.yml"             # 期望 True（profile 名按实际替换）
 ```
 
 `cordis.patch.yml` 不存在 = DSH 还没初始化 profile：**先启动一次 DSH**（它会自己建），再回来。
 
 ### 1.3 校验包完整性（只读，不写一个字节）
 
-```bash
-$NODE VERIFY.mjs                                  # ① 整包核对：文件清单 + 快照库自洽
-$NODE 2-personal-data/tools/restore.mjs --mode verify   # ② 看目标机器现状与期望数字
+```powershell
+& $NODE VERIFY.mjs                                       # ① 整包核对：文件清单 + 快照库自洽
+& $NODE 2-personal-data/tools/restore.mjs --mode verify  # ② 看目标机器现状与期望数字
 ```
 
 预期：
@@ -83,14 +102,14 @@ $NODE 2-personal-data/tools/restore.mjs --mode verify   # ② 看目标机器现
 
 ### 2.1 先看一眼它打算做什么（可选但推荐）
 
-```bash
-$NODE 2-personal-data/tools/restore.mjs --dry-run
+```powershell
+& $NODE 2-personal-data/tools/restore.mjs --dry-run
 ```
 
 ### 2.2 正式还原
 
-```bash
-$NODE 2-personal-data/tools/restore.mjs
+```powershell
+& $NODE 2-personal-data/tools/restore.mjs
 ```
 
 预期输出（全新设备）：
@@ -122,17 +141,19 @@ $NODE 2-personal-data/tools/restore.mjs
 几条硬规则：
 
 - **目标库非空**：`snapshot` 会拒绝（`TARGET_NOT_EMPTY`）；确实要覆盖就
-  `--mode snapshot --force`（脚本会先把旧库备份成 `memory.db.before-restore-<时间戳>`）。
+  `--mode snapshot --force`（脚本会先把旧库备份成 `memory.db.before-restore-<时间戳>`，
+  然后再替换；备份就在数据目录里，随时能拷回去）。
 - **报 `DB_OPEN`**：说明 DSH 正开着库（存在 `-wal/-shm`）。要么**完全退出 DSH** 再跑，
   要么用 `--mode merge`（合并可以在 DSH 运行时做）。
-- **dataDir 不是默认路径**：脚本会从已安装的 patch 里读 `dataDir` 自动跟随；也可 `--data-dir <路径>` 显式给。
+- **dataDir 不是默认路径**：脚本只读 patch 里 **dsh-memory 自己那块** 的 `dataDir` 自动跟随
+  （别的插件的 `dataDir` 不会被误认）；也可 `--data-dir <路径>` 显式给。
 
 ### 2.4 目标 dataDir 与安装器保持一致
 
 若你用了 `--data-dir` 自定义路径，**§3 装插件时必须传同一个**：
 
-```bash
-$NODE 1-plugin/dsh-memory/tools/install.mjs --data-dir <同一个路径>
+```powershell
+& $NODE 1-plugin/dsh-memory/tools/install.mjs --data-dir <同一个路径>
 ```
 
 ---
@@ -141,8 +162,8 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs --data-dir <同一个路径>
 
 ### 3.1 一条命令
 
-```bash
-$NODE 1-plugin/dsh-memory/tools/install.mjs
+```powershell
+& $NODE 1-plugin/dsh-memory/tools/install.mjs
 ```
 
 预期：
@@ -158,12 +179,15 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs
 
 - **幂等**：重复跑只刷新那一块，不会出现两条同 id 的 row；
 - **原子写 + 自动备份**：写前先备份，写到临时文件再改名，改坏不了 profile；
+- **换行**：patch 若原本是 CRLF，安装/卸载后会统一归一为 LF（内容不变，语义不变；
+  若你在 git 里看到整文件 diff，是换行差异）；
 - 多个 profile 时用 `--profile <名字>` 指定；只想看会改什么用 `--dry-run --print`；
-- Windows 也可以用老脚本（两者写出的块完全一致、互相认得）：
+- Windows 也可以用老脚本 `install.ps1`：两者**格式相同、互相认得、可互相覆盖/卸载**
+  （marker 注释文案不同，切换时会触发一次重写，有备份，无害）：
   ```powershell
   powershell -ExecutionPolicy Bypass -File 1-plugin\dsh-memory\tools\install.ps1
   ```
-- 卸载：`$NODE 1-plugin/dsh-memory/tools/install.mjs --uninstall`（只删块，不动插件文件与数据）。
+- 卸载：`& $NODE 1-plugin/dsh-memory/tools/install.mjs --uninstall`（只删块，不动插件文件与数据）。
 
 ### 3.2 确认 patch 内容
 
@@ -192,18 +216,18 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs
 
 ---
 
-## §4 验收（5 条全过才算部署完成）
+## §4 验收（4 条全过才算部署完成）
 
 | # | 检查 | 预期 |
 |---|---|---|
 | 1 | agent 侧 `plugin_manager(list_plugins)` | 能看到 `id=memory`，`fiberPhase=active`，`name` 指向包内 `lib/index.js` |
-| 2 | 对 DSH 的 HTTP 端口发一次**不带 Cookie** 的请求：`GET /api/dsh-memory/state` | **401**（说明路由已注册、信任栅栏在工作；200 反而危险） |
-| 3 | 左栏 | 出现「记忆」图标；点开有 4 个页签：**仓管 / 副仓管 / 搜索 / 设置** |
-| 4 | `memory_stats` | `memories` = **{{MEMORIES_ACTIVE}}**；若嵌入配置与包一致，`activeSpace.missing` 应为 0 |
-| 5 | 面板「搜索」页 | 「最近入库」有内容；随便搜一个词（中文建议 ≥3 字）能出结果 |
+| 2 | 面板 | 左栏出现「记忆」图标；点开有 4 个页签：**仓管 / 副仓管 / 搜索 / 设置**，且「概览」能正常加载（说明宿主路由与客户端 bundle 都注册成功） |
+| 3 | `memory_stats` | `memories` = **{{MEMORIES_ACTIVE}}**；嵌入配置与包一致时，`activeSpace.missing` 应为 0 |
+| 4 | 面板「搜索」页 | 「最近入库」有内容；随便搜一个词（中文建议 ≥3 字）能出结果 |
 
-> 第 2 条在 Windows PowerShell 里：`Invoke-WebRequest -SkipHttpErrorCheck http://127.0.0.1:<端口>/api/dsh-memory/state`；
-> Linux/macOS：`curl -i http://127.0.0.1:<端口>/api/dsh-memory/state`。端口就是 DSH Web GUI 的端口。
+> 不要用「不带 Cookie 请求 `/api/dsh-memory/state` 返回 401」当验收：DSH 在**路由之前**统一鉴权，
+> 任意 `/api/*`（包括不存在的）都会 401，它只能证明鉴权栅栏在工作，证明不了路由已注册。
+> 要看路由确实在，就用**带登录 Cookie** 的请求拿 200 JSON，或者直接看面板能不能正常加载。
 
 ---
 
@@ -225,16 +249,16 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs
 
 1. **读 `AGENT-HANDOFF.md`** —— 项目现状、架构地图、铁律、下一步都在里面；
 2. 确认 git 可用（包内带 `.git`）：
-   ```bash
+   ```powershell
    cd 1-plugin/dsh-memory
    git log --oneline -3     # 期望 HEAD = {{COMMIT}}
    git status               # 期望干净（若你在外部改过文件会有差异）
    ```
-3. 跑一遍回归，确认这台设备上能开发：
-   ```bash
-   $NODE tools/run-tests.mjs --client
+3. 跑一遍回归，确认这台设备上能开发（**在插件目录里跑**）：
+   ```powershell
+   & $NODE tools/run-tests.mjs --client
    ```
-   预期 `pass 372 / fail 0` + 客户端自检全部通过。（`node --test test/` 在受限环境会因
+   预期 `pass 373 / fail 0` + 客户端自检全部通过。（`node --test test/` 在受限环境会因
    `spawn EPERM` 失败 —— 那是环境限制，不是项目坏了；用这个包装脚本。）
 4. 把部署结果报告给用户：插件 active、数据条数、密钥/向量状态、以及**这台设备上还没做的事**
    （通常是向量补齐、密钥）。
@@ -245,6 +269,9 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs
 
 | 现象 | 原因 / 处置 |
 |---|---|
+| `Unexpected token '-v'` / `$NODE : 无法识别` | PowerShell 里变量不能直接当命令：写成 `& $NODE ...`（见文首「命令写法」） |
+| `$DSH_HOME` 检查永远 False | PowerShell 里要用 `$env:DSH_HOME`，或先 `$DSH_HOME = $env:DSH_HOME` |
+| `Invoke-WebRequest : 找不到参数 -SkipHttpErrorCheck` | 那是 PowerShell 7 的参数，Windows 自带 5.1 没有；改用带 Cookie 的 200 校验或面板验收 |
 | `✗ 还原失败（DB_OPEN）` | DSH 正开着库（`-wal/-shm` 存在）。完全退出 DSH 后重跑；或 `--mode merge` |
 | `✗ 还原失败（TARGET_NOT_EMPTY）` | 目标库已有记忆。用 `--mode merge` 合并；确认要覆盖才加 `--force` |
 | `✗ 还原失败（PACKAGE_CORRUPT）` | 包传输损坏。让对方重发，别自己修文件 |
@@ -252,7 +279,7 @@ $NODE 1-plugin/dsh-memory/tools/install.mjs
 | `✗ 还原失败（NO_PLUGIN）` | merge 模式找不到插件源码。确认 `1-plugin/dsh-memory/` 在包里，或 `--plugin <路径>` |
 | 装了插件左栏没有「记忆」 | patch 块在不在（§3.2）；DSH 是否**完全重启**；`plugin_manager(list_plugins)` 有没有 `id=memory` |
 | 有 active 但面板打不开 | 浏览器 F5；看 DSH 控制台有无 `client-modules` 报错；`lib/client.js` 是否随包完整 |
-| 面板里记忆是 0 | 还原时的 `--data-dir` 与 patch 里的 `dataDir` 是否**同一个**（§2.4） |
+| 面板里记忆是 0 | 还原时的 `--data-dir` 与 patch 里的 `dataDir` 是否**同一个**（§2.4）；patch 里别的手工行有没有覆盖 |
 | 搜索只能关键词命中 | 向量没补齐（§5.2）或 `missing > 0`；中文查询建议 ≥3 字 |
 | 抽取总是 0 条 | 宿主 LLM 不可用（§5.3）；或没有可用模型 |
 | `node:sqlite` 报错 / `DatabaseSync is not a constructor` | Node 版本太低。换 DSH 自带运行时（§1.1） |

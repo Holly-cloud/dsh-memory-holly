@@ -494,10 +494,20 @@ export async function buildPackage(config) {
   };
   writeFileSync(join(packageDataDir, 'counts.json'), JSON.stringify(counts, null, 2), 'utf8');
 
+  // 文档里用**本地时间 + 时区偏移**，避免「打于 15:56」与本地文件时间对不上（那是 UTC 的锅）。
+  const localNow = new Date();
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const offsetMinutes = -localNow.getTimezoneOffset();
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-';
+  const offsetAbs = Math.abs(offsetMinutes);
+  const localDate = `${localNow.getFullYear()}-${pad2(localNow.getMonth() + 1)}-${pad2(localNow.getDate())}`;
+  const localTime = `${pad2(localNow.getHours())}:${pad2(localNow.getMinutes())}`;
+  const localStamp = `${localDate} ${localTime} (UTC${offsetSign}${pad2(Math.floor(offsetAbs / 60))}:${pad2(offsetAbs % 60)})`;
+
   const values = {
     LABEL: config.label,
-    DATE: exportedAt.slice(0, 10),
-    DATETIME: exportedAt.replace('T', ' ').slice(0, 19),
+    DATE: localDate,
+    DATETIME: localStamp,
     COMMIT: git.commit ?? '(未知)',
     COMMIT_SUBJECT: git.subject ?? '',
     BRANCH: git.branch ?? '',

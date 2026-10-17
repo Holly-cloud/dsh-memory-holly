@@ -8,7 +8,7 @@
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -25,6 +25,7 @@ import {
 } from '../tools/install-lib.mjs';
 import {
   decideMode,
+  detectDataDir,
   inspectTarget,
   isEmptyTarget,
   loadCounts,
@@ -159,10 +160,63 @@ test('isEmptyTarget：记忆/批次/变更单/副审阅区任一非零都不算�
   assert.equal(isEmptyTarget({ ...base, batchItemsPending: 1 }), false);
 });
 
-test('parsePatchDataDir：只认 dataDir 那一行，反例返回 null', () => {
-  assert.equal(parsePatchDataDir("x:\n  config:\n    dataDir: 'C:/mem'\n"), 'C:/mem');
+test('parsePatchDataDir：只认 dsh-memory 自己块里的 dataDir（别的插件的同名键必须忽略）', () => {
+  const memoryBlock = [
+    '- id: other-plugin',
+    '  config:',
+    "    dataDir: 'C:/other-plugin-data'",
+    '',
+    '# dsh-memory -- managed block (written by tools/install.mjs; do not edit by hand).',
+    '- insert:',
+    '    - id: memory',
+    "      name: 'C:/pkg/lib/index.js'",
+    '      config:',
+    "        dataDir: 'C:/mem'",
+    '',
+    '- id: after-plugin',
+    '  config:',
+    "    dataDir: 'C:/after-data'",
+  ].join('\n');
+  assert.equal(parsePatchDataDir(memoryBlock), 'C:/mem'); // 不是第一条 C:/other-plugin-data
+  assert.equal(parsePatchDataDir("x:\n  config:\n    dataDir: 'C:/mem'\n"), null); // 没有 dsh-memory 块
   assert.equal(parsePatchDataDir('dataDir: "C:/mem"'), null); // 要求单引号
   assert.equal(parsePatchDataDir(''), null);
+});
+
+test('detectDataDir：只跟随 dsh-memory 块里的 dataDir；没有本插件块时回落 <DSH_HOME>/dsh-memory', () => {
+  const home = join(TMP, 'fake-dsh-home');
+  mkdirSync(join(home, 'profiles', 'desktop'), { recursive: true });
+  writeFileSync(
+    join(home, 'profiles', 'desktop', 'cordis.patch.yml'),
+    [
+      '- id: other-plugin',
+      '  config:',
+      "    dataDir: 'C:/other-plugin-data'",
+      '',
+      '# dsh-memory -- managed block (written by tools/install.mjs; do not edit by hand).',
+      '- insert:',
+      '    - id: memory',
+      "      name: 'C:/pkg/lib/index.js'",
+      '      config:',
+      "        dataDir: 'C:/mem-data'",
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  const detected = detectDataDir({ dshHome: home });
+  assert.equal(detected.from, 'patch');
+  assert.equal(detected.dataDir, resolve('C:/mem-data'));
+
+  const home2 = join(TMP, 'fake-dsh-home-2');
+  mkdirSync(join(home2, 'profiles', 'web'), { recursive: true });
+  writeFileSync(
+    join(home2, 'profiles', 'web', 'cordis.patch.yml'),
+    ["- id: other-plugin", '  config:', "    dataDir: 'C:/other-plugin-data'", ''].join('\n'),
+    'utf8',
+  );
+  const fallback = detectDataDir({ dshHome: home2 });
+  assert.equal(fallback.from, 'default');
+  assert.equal(fallback.dataDir, join(home2, 'dsh-memory'));
 });
 
 test('verifySnapshotCounts：数字不符抛 VERIFY_FAILED，并点名差在哪一项', () => {
@@ -378,7 +432,7 @@ test('端到端：打包 → 快照还原 → 合并还原 → 幂等重跑', as
   assert.equal(again.after.memories, 6);
 });
 
-test('端到端：快照模式对非空目标要 --force；DSH 开着（-wal）时拒绝替换', async () => {
+test('端到端：快照模式对非空目标要 --force；force 成功时会先备份旧库；-wal 时拒绝替换', async () => {
   const fixture = makeFixtureDb(join(TMP, 'fixture2'));
   const out = join(BUILD_ROOT, 'pkg2');
   await buildPackage({ out, db: fixture.dbPath, label: 'test-pack-2', withGit: false, withZip: false, force: true });
@@ -388,10 +442,33 @@ test('端到端：快照模式对非空目标要 --force；DSH 开着（-wal）�
   const first = await restorePersonalData({ packageDir, dataDir: populated, mode: 'auto' });
   assert.equal(first.mode, 'snapshot');
 
+  // 先往「populated」里加一条不同的记忆 → 目标非空，快照替换必须要求 --force
+  const extra = openDatabase(join(populated, 'memory.db'));
+  new MemoryStore(extra, {}).addMemory({ text: '目标机器后来新增的一条记忆（会被覆盖，但必须有备份）', source: 'extra' });
+  closeDatabase(extra);
+
   await assert.rejects(
     () => restorePersonalData({ packageDir, dataDir: populated, mode: 'snapshot' }),
     (error) => error instanceof RestoreError && error.code === 'TARGET_NOT_EMPTY',
   );
+  assert.equal(
+    readdirSync(populated).filter((name) => name.startsWith('memory.db.before-restore-')).length,
+    0,
+    '被拒绝的调用不该留下备份文件',
+  );
+
+  // --force：真的替换，且旧库留有备份
+  const forced = await restorePersonalData({ packageDir, dataDir: populated, mode: 'snapshot', force: true });
+  assert.equal(forced.mode, 'snapshot');
+  assert.equal(forced.after.memories, 5);
+  const backups = readdirSync(populated).filter((name) => name.startsWith('memory.db.before-restore-'));
+  assert.equal(backups.length, 1, '覆盖前必须备份旧库');
+  const backupDb = openDatabase(join(populated, backups[0]), { readOnly: true });
+  try {
+    assert.equal(backupDb.prepare('SELECT COUNT(*) n FROM memories').get().n, 6); // 5 条还原 + 1 条新增
+  } finally {
+    closeDatabase(backupDb);
+  }
 
   // 模拟 DSH 正开着库：真开一个连接并写一笔（-wal 存在且有效）
   const openTarget = join(TMP, 'open-target');
