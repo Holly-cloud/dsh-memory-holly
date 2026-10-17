@@ -212,6 +212,26 @@ function buildDataFiles(snapshotPath, packDir, sidecarDir) {
     const activeSpace = db.prepare("SELECT value FROM spaces WHERE key='active'").get();
     writeFileSync(join(sidecarDir, 'spaces.json'), JSON.stringify({ active: activeSpace?.value ?? null }, null, 2), 'utf8');
 
+    // 快照还原后「还缺多少条向量」：活动空间里有记忆但没有对应向量行的条数。
+    // 0 = 开箱即用；>0 = 打包时本机还有没补齐的（拿到新机器后点一次「补齐」即可，数字很小）。
+    let activeSpaceKey = null;
+    try {
+      activeSpaceKey = JSON.parse(String(activeSpace?.value ?? 'null'))?.key ?? null;
+    } catch {
+      activeSpaceKey = null;
+    }
+    const vectorsMissing = activeSpaceKey
+      ? Number(
+          db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM memories m
+               WHERE m.deleted_at IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.memory_id = m.id AND v.space = ?)`,
+            )
+            .get(activeSpaceKey).n,
+        )
+      : memoriesActive;
+
     // ── 文本包（走插件自己的 exportPack：已测试的代码路径）─────────────────────────
     const store = new MemoryStore(db, {});
     const exported = exportPack({
@@ -229,6 +249,7 @@ function buildDataFiles(snapshotPath, packDir, sidecarDir) {
         memoriesActive,
         memoriesDeleted: memoriesTotal - memoriesActive,
         vectors,
+        vectorsMissing,
         batchesOpen,
         batchItemsPending,
         plansActionable,
@@ -516,6 +537,7 @@ export async function buildPackage(config) {
     MEMORIES_TOTAL: String(built.counts.memoriesTotal),
     MEMORIES_DELETED: String(built.counts.memoriesDeleted),
     VECTORS: String(built.counts.vectors),
+    VECTORS_MISSING: String(built.counts.vectorsMissing),
     BATCHES: String(built.counts.batchesOpen),
     BATCH_ITEMS: String(built.counts.batchItemsPending),
     PLANS: String(built.counts.plansActionable),

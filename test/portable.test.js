@@ -352,6 +352,7 @@ test('端到端：打包 → 快照还原 → 合并还原 → 幂等重跑', as
   assert.equal(counts.counts.batchItemsPending, 2);
   assert.equal(counts.counts.plansActionable, 1);
   assert.equal(counts.counts.handoffsOpen, 1);
+  assert.equal(counts.counts.vectorsMissing, 5); // 夹具没写向量：快照还原后这 5 条就是要补齐的
   assert.equal(counts.files['data/memory.db'].sha256.length, 64);
 
   // 完整性校验：原包 OK；改一个字节（保持大小不变）就报 sha256 不符

@@ -222,7 +222,7 @@ Test-Path "$DSH_HOME\profiles\desktop\cordis.patch.yml"             # 期望 Tru
 |---|---|---|
 | 1 | agent 侧 `plugin_manager(list_plugins)` | 能看到 `id=memory`，`fiberPhase=active`，`name` 指向包内 `lib/index.js` |
 | 2 | 面板 | 左栏出现「记忆」图标；点开有 4 个页签：**仓管 / 副仓管 / 搜索 / 设置**，且「概览」能正常加载（说明宿主路由与客户端 bundle 都注册成功） |
-| 3 | `memory_stats` | `memories` = **{{MEMORIES_ACTIVE}}**；嵌入配置与包一致时，`activeSpace.missing` 应为 0 |
+| 3 | `memory_stats` | `memories` = **{{MEMORIES_ACTIVE}}**；嵌入配置与包一致时，`activeSpace.missing` 应为 **{{VECTORS_MISSING}}**（0 = 开箱即用；>0 就按 §5.2 补齐） |
 | 4 | 面板「搜索」页 | 「最近入库」有内容；随便搜一个词（中文建议 ≥3 字）能出结果 |
 
 > 不要用「不带 Cookie 请求 `/api/dsh-memory/state` 返回 401」当验收：DSH 在**路由之前**统一鉴权，
@@ -236,8 +236,9 @@ Test-Path "$DSH_HOME\profiles\desktop\cordis.patch.yml"             # 期望 Tru
 1. **面板 → 设置 → 嵌入配置**：选中档案（包里带了 `{{SETTINGS}}` 个设置项，含档案定义与 `apiKeyRef` 引用名），
    粘贴密钥 → **保存**（走 `ctx.credentials.set`，只进 DSH 凭据库，不落本包任何文件）。
 2. 回**概览**看「当前空间缺多少条」：
+   - 本包快照的向量缺口是 **{{VECTORS_MISSING}}** 条（打包时本机还没补齐的）；
    - `missing = 0` → 什么都不用做（快照里带着向量，且模型/维度一致）；
-   - `missing > 0` → 点**补齐**（merge 模式一定是这个情况：合并不搬向量，按当前模型重算）。
+   - `missing > 0` → 点**补齐**（只算缺的；merge 模式一定是全缺：合并不搬向量，按当前模型重算）。
 3. **LLM 预检**：抽取与仓管用的是**宿主已配置的模型**，不是本插件的 key。新设备上确保 DSH 自己
    有可用模型（面板设置页有「LLM 预检」可以一键确认）。
 4. 若新设备的密钥引用名与包里的 `apiKeyRef` 不同（比如换成了 `OPENAI_API_KEY`），在设置里改档案的

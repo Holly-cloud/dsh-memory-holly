@@ -96,7 +96,7 @@
 1. 面板「概览」：记忆条数 = **{{MEMORIES_ACTIVE}}**；
 2. 面板「搜索」：搜一条你记得的记忆的开头几个字 → 能命中；
 3. 面板「副仓管」：有 **{{HANDOFFS}}** 组待接手（若包里有）；
-4. `memory_stats`：`activeSpace.missing` 应为 0（snapshot 模式且密钥/模型与包一致时）；
+4. `memory_stats`：`activeSpace.missing` 应为 **{{VECTORS_MISSING}}**（打包时的向量缺口；0 = 开箱即用，>0 点一次「补齐」）；
 5. 挑一条记忆点开看正文 —— 与旧机器上一致（一字不差）。
 
 ---

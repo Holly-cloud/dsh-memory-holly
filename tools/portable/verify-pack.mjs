@@ -115,6 +115,27 @@ function main() {
       check(one('SELECT COUNT(*) n FROM memories WHERE deleted_at IS NULL') === c.memoriesActive, `记忆 ${c.memoriesActive} 条`);
       check(one('SELECT COUNT(*) n FROM memories') === c.memoriesTotal, `含已删共 ${c.memoriesTotal} 条`);
       check(one('SELECT COUNT(*) n FROM vectors') === c.vectors, `向量 ${c.vectors} 条`);
+      if (c.vectorsMissing != null) {
+        const spaceRow = db.prepare("SELECT value FROM spaces WHERE key='active'").get();
+        let spaceKey = null;
+        try {
+          spaceKey = JSON.parse(String(spaceRow?.value ?? 'null'))?.key ?? null;
+        } catch {
+          spaceKey = null;
+        }
+        const missing = spaceKey
+          ? Number(
+              db
+                .prepare(
+                  `SELECT COUNT(*) AS n FROM memories m
+                   WHERE m.deleted_at IS NULL
+                     AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.memory_id = m.id AND v.space = ?)`,
+                )
+                .get(spaceKey).n,
+            )
+          : Number(c.memoriesActive);
+        check(missing === c.vectorsMissing, `快照还原后还需补齐的向量 ${missing} 条（与 counts 一致；0 = 开箱即用）`);
+      }
       check(one("SELECT COUNT(*) n FROM batches WHERE state='open'") === c.batchesOpen, `待审批次 ${c.batchesOpen} 个`);
       check(one("SELECT COUNT(*) n FROM batch_items WHERE state='pending'") === c.batchItemsPending, `待审条目 ${c.batchItemsPending} 条`);
       check(

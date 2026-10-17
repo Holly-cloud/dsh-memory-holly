@@ -43,6 +43,7 @@ node 1-plugin/dsh-memory/tools/install.mjs    # ② 把插件装进 DSH 的 prof
 
 - 快照能打开，记忆 **{{MEMORIES_ACTIVE}}** 条（含已删共 {{MEMORIES_TOTAL}}）/ 向量 {{VECTORS}} / 待审批次 {{BATCHES}} / 待审条目 {{BATCH_ITEMS}} / 变更单 {{PLANS}} / 副审阅区 {{HANDOFFS}} 与活库一致；
 - 文本包能导进**全新空库**且 `added = 包内条数`、`skipped = 0`、`failed = 0`（无损）；
+- 快照还原后的向量缺口 = **{{VECTORS_MISSING}}** 条（0 = 开箱即用；>0 是打包时本机还没补齐的，面板点一次「补齐」）；
 - 包里所有 `src/host/*.js` 都能被 Node 直接 `import`（语法与相对依赖没坏）；
 - zip 回读每个条目内容一致；
 - 设置与文档里扫不到 `sk-…` / `apiKey` / token 这类字面量。
