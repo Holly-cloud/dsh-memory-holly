@@ -21,6 +21,32 @@
 
 ---
 
+## 0.5 更省事的路：用「便携包」
+
+如果目标机器也是 DSH，**不用照下面手工搬** —— 在源仓库跑：
+
+```powershell
+& $node dsh-memory\tools\make-portable-pack.mjs
+```
+
+得到一个 `dsh-memory-portable-<日期>.zip`，里面是两大部分：
+
+- `1-plugin/dsh-memory/` —— 插件本体（代码、测试、工具、文档、`.git`，可继续开发）；
+- `2-personal-data/` —— 库快照 + 文本包 + **待审阅条目 / 变更单 / 副审阅区** + 设置 +
+  一键还原脚本（`memory_import` 只导记忆正文，**导不了这些待办**，所以便携包用快照/合并两条腿搬）。
+
+对方解压后照包内 `INSTALL.md`（写成给 agent 的执行清单）做，核心就两条命令：
+
+```powershell
+& $node 2-personal-data\tools\restore.mjs      # ① 先还原（全新机器=落快照，一字不差）
+& $node 1-plugin\dsh-memory\tools\install.mjs  # ② 再装（跨平台；Windows 也可 install.ps1）
+```
+
+顺序别反：插件一装就会打开库，趁它没打开时落快照最干净（也避免 DSH 开着库时替换文件的危险）。
+本文件剩下的手工步骤仍然有效 —— 便携包就是把 §1–§4 自动化，并额外带走那些「待办」。
+
+---
+
 ## 1. 重置前：生成/复核迁移包
 
 包已经生成好了（`dsh-memory-data\.migration\memory-pack\`，1087 条）。任何时候想重新生成，跑：

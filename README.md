@@ -32,6 +32,10 @@
         dataDir: '<DSH_HOME>/dsh-memory'
 ```
 
+> 不想手写 YAML：直接跑 `node tools/install.mjs`（跨平台安装器：自动找 profile、幂等、写前备份、
+> 原子写、`--uninstall` 一键卸载）。Windows 也可用老的 `tools/install.ps1` —— 两者写出的块
+> **完全一致、互相认得**。
+
 改完 patch 文件即热生效（Loader 重放 patch 层），**不需要重启 DSH**。验证：
 
 ```powershell
@@ -130,6 +134,42 @@ Remove-Item Env:GH_TOKEN
 - 只要照抄 `-c http.sslBackend=openssl` 这一项即可；**不要**把 token 写进 remote URL 后 `git remote add`，
   否则它会留在 `.git/config` 里。
 - 细粒度 PAT（`github_pat_…`）只支持 HTTPS，**不能走 SSH**。
+
+---
+
+## 便携包（打包 / 交付到别的设备）
+
+一条命令把「插件本体 + 个人数据」打成一个可交付的包：
+
+```powershell
+& $node dsh-memory\tools\make-portable-pack.mjs   # 默认 ../release/dsh-memory-portable-<日期>/ 与同名 .zip
+```
+
+包分**两大部分**（可分开拷，但一起交付最省事）：
+
+| 部分 | 内容 | 能不能公开 |
+|---|---|---|
+| `1-plugin/dsh-memory/` | 插件本体：代码、测试、工具、文档、`.git` | 能（与 GitHub 仓库一致） |
+| `2-personal-data/` | 记忆库快照 + 文本包 + **待审条目 / 变更单 / 副审阅区** + 设置 + 一键还原脚本 | **不能**（私密正文） |
+
+拿到包的任何设备按包内 `INSTALL.md` 走即可（写成给 agent 的执行清单）：还原数据 → 装插件 →
+重启 → 验收 → 贴密钥 / 补向量。还原只有一条命令：
+
+```powershell
+& $node 2-personal-data\tools\restore.mjs
+```
+
+- **auto 模式**：库不存在、或为空且没被 DSH 打开 → **落快照**（记忆 / 向量 / 历史 / 原 id 一字不差）；
+  已有数据、或 DSH 正开着库 → **合并**（按正文 hash 判重，只增不改）；
+- `--mode verify` 只校验包完整性并显示目标现状；`--dry-run` 只报告不写库；
+- **包里永远没有密钥**（设置里只有 `apiKeyRef` 引用名），密钥到新机器在面板「设置」里重填一次。
+
+打包器**出包前自证**（任何一项不过就拒绝出包）：快照可读且数字与活库一致、文本包能无损导入空库、
+附属表计数一致、`src/host/*.js` 全部可 `import`、zip 回读逐条一致、设置与文档里扫不到密钥字面量。
+
+跨平台安装器 `tools/install.mjs`（Windows / Linux / macOS 通用，Node 实现）与老的
+`tools/install.ps1` 写出的块**完全一致、互相认得**；两者都幂等、写前备份、原子写。
+新设备一律用 `install.mjs`。
 
 ---
 
