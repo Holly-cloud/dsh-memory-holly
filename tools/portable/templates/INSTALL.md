@@ -60,7 +60,8 @@ ls "$DSH_HOME/profiles/<profile>/cordis.patch.yml"
 ### 1.3 校验包完整性（只读，不写一个字节）
 
 ```bash
-$NODE 2-personal-data/tools/restore.mjs --mode verify
+$NODE VERIFY.mjs                                  # ① 整包核对：文件清单 + 快照库自洽
+$NODE 2-personal-data/tools/restore.mjs --mode verify   # ② 看目标机器现状与期望数字
 ```
 
 预期：

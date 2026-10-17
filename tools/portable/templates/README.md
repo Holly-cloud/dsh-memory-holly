@@ -47,7 +47,12 @@ node 1-plugin/dsh-memory/tools/install.mjs    # ② 把插件装进 DSH 的 prof
 - zip 回读每个条目内容一致；
 - 设置与文档里扫不到 `sk-…` / `apiKey` / token 这类字面量。
 
-想自己复核：`node 2-personal-data/tools/restore.mjs --mode verify`（只读，不写一个字节）。
+想自己复核（只读，不写一个字节）：
+
+```bash
+node VERIFY.mjs                                         # 核对整个包的文件 + 快照库自洽
+node 2-personal-data/tools/restore.mjs --mode verify     # 看目标机器现状与期望数字
+```
 
 ---
 
@@ -59,11 +64,12 @@ node 1-plugin/dsh-memory/tools/install.mjs    # ② 把插件装进 DSH 的 prof
 ├─ INSTALL.md                 ← **部署手册**（给 agent 的执行清单，含验收与排障）
 ├─ AGENT-HANDOFF.md           ← **开发交接**（项目现状、架构、铁律、下一步）
 ├─ MANIFEST.json              ← 全量文件清单 + sha256 + 计数
+├─ VERIFY.mjs                 ← 收包方自查：核对清单与快照库（只读）
 ├─ 1-plugin/dsh-memory/       ← 插件本体（含 .git，可直接继续开发）
 │  ├─ lib/                    ← 宿主入口 + 客户端面板（无构建，手写 bundle）
 │  ├─ src/host/               ← 18 个宿主模块
 │  ├─ test/                   ← 372 个用例（node:test）
-│  ├─ tools/                  ← 安装器 / 自检 / 迁移包 / 本打包器
+│  ├─ tools/                  ← 安装器 / 自检 / 迁移包 / 便携打包器
 │  ├─ README.md DESIGN.md MIGRATION.md PHASE0.md REGRESSION.md
 │  └─ package.json .gitignore
 └─ 2-personal-data/

@@ -387,6 +387,28 @@ export async function buildPackage(config) {
     snapshotDb.close();
   }
 
+  // ── 3.5 快照归一：checkpoint 到主文件、切回 rollback journal、清掉 -wal/-shm ─────
+  //
+  // 为什么必须做：`backup()` 落下来的目标库是 WAL 模式，只要有人（哪怕是只读）再打开一次，
+  // 目录里就可能留下 `memory.db-wal` / `-shm`。这些文件**不属于交付物**：
+  //   - 包里带一个 `-wal`，拿到别的机器上还原时只拷 `memory.db`，WAL 里的东西就丢了；
+  //   - 还原脚本按「只拷 memory.db + 删目标 -wal」设计，包这边必须保证主文件是完整的。
+  // 所以这里把 WAL 内容 checkpoint 进主库、把库切回 DELETE 模式（DSH 打开时会自己切回 WAL），
+  // 再删残留；删完断言不存在 —— 出包前最后一道闸。
+  {
+    const normalize = new DatabaseSync(snapshotPath);
+    try {
+      normalize.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      normalize.exec('PRAGMA journal_mode = DELETE');
+    } finally {
+      normalize.close();
+    }
+    for (const suffix of ['-wal', '-shm']) rmSync(`${snapshotPath}${suffix}`, { force: true });
+    if (existsSync(`${snapshotPath}-wal`) || existsSync(`${snapshotPath}-shm`)) {
+      throw new Error('快照归一失败：memory.db 旁边仍有 -wal/-shm');
+    }
+  }
+
   // ── 4. 插件本体 ────────────────────────────────────────────────────────────────
   for (const rel of PLUGIN_FILES) {
     const from = join(REPO_ROOT, rel);
@@ -414,6 +436,8 @@ export async function buildPackage(config) {
   for (const rel of ['restore.mjs', 'restore-core.mjs']) {
     copyFileSync(join(HERE, 'portable', rel), join(toolsDir, rel));
   }
+  // 收包方自查脚本放在包根：一条命令核对 MANIFEST + 快照库（只读）
+  copyFileSync(join(HERE, 'portable', 'verify-pack.mjs'), join(config.out, 'VERIFY.mjs'));
   const exportedAt = new Date().toISOString();
   const files = {
     ...(() => {

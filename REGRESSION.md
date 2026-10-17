@@ -2854,6 +2854,23 @@ sideJob 各存各的、两条线并发接同一组只有一个拿得到）；客
 **端到端**：夹具库 → 打包 → 快照还原（原 id 保真）→ 合并还原（旧 id 映射到新 id、变更单不指向
 不存在的记忆）→ 二次合并幂等；以及「非空库要 `--force`」「`-wal` 存在时拒绝替换、auto 自动改走 merge」。
 
+### 出包后自己抓到的一个真问题：`memory.db-wal` / `-shm` 混进包
+
+第一次出包、解压复核时发现数据目录里多了 `memory.db-wal`（32 KB）与 `memory.db-shm`：
+
+- **根因**：`backup()` 落下来的目标库是 WAL 模式；之后任何一次打开（哪怕是只读的 `DatabaseSync`）
+  都可能让它旁边出现 `-wal/-shm`。而打包时的 `listFiles(dataDir)` 把这些**派生文件**也算进了包。
+- **为什么危险**：还原脚本的快照路径是「只拷 `memory.db` + 删目标 `-wal/-shm`」。
+  如果快照主文件里少了 WAL 中已提交的页，包里带个 WAL 也不会被用上 —— 那就是**静默丢数据**。
+  这一次实测数据没丢（主文件本来就完整），但这是**运气**，不是设计。
+- **改法**（`make-portable-pack.mjs` 新增 §3.5）：出包前用原生连接
+  `PRAGMA wal_checkpoint(TRUNCATE)` → `PRAGMA journal_mode = DELETE` → 删残留 → **断言不存在**。
+  库切回 DELETE 模式，DSH 首次打开时会自己切回 WAL（`openDatabase` 就是这么做的）。
+- **复核**：重打后数据目录只剩 `counts.json / memory.db / pack/ / sidecars/`，
+  zip 条目 232 → 230；用新 zip 在模拟环境重走「解压 → 还原 → 装插件 → 插件打开库」：
+  记忆 1374 / 向量 1433 / 待审 2 / 变更单 2 / 副审阅区 3 / 设置 6、`missing vectors = 0`、
+  关键词检索能命中、`journal_mode` 变回 `wal`。
+
 ### 如实边界
 
 ① **没有在「另一台真设备」上验证过**：只在本机用模拟 `DSH_HOME` + 空目录验证了安装/还原/卸载；

@@ -52,7 +52,7 @@ src/host/keeper-plan.js 变更单：提示词、ops 归一、证据 warnings
 src/host/panel.js   面板 HTTP 路由（表驱动；requestBody: 'buffered'；37 条）
 src/host/portability.js 导出包 / 导入（按全文 hash 判重；文本是本体）
 src/host/timeout.js 超时包装
-tools/              安装器 / 自检 / 迁移包 / **便携打包器** / 测试 runner
+tools/              安装器 / 自检 / 迁移包 / **便携打包器** / 收包自查 / 测试 runner
 test/               19 个 node:test 文件（372 用例）
 ```
 

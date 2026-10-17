@@ -10,6 +10,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { closeDatabase, openDatabase } from '../src/host/db.js';
 import { MemoryStore } from '../src/host/store.js';
@@ -262,10 +263,21 @@ test('端到端：打包 → 快照还原 → 合并还原 → 幂等重跑', as
   const packageDir = join(out, '2-personal-data');
 
   // 目录形状
-  for (const rel of ['README.md', 'INSTALL.md', 'AGENT-HANDOFF.md', 'MANIFEST.json', '1-plugin/dsh-memory/lib/index.js', '2-personal-data/data/counts.json', '2-personal-data/tools/restore.mjs']) {
+  for (const rel of ['README.md', 'INSTALL.md', 'AGENT-HANDOFF.md', 'MANIFEST.json', 'VERIFY.mjs', '1-plugin/dsh-memory/lib/index.js', '2-personal-data/data/counts.json', '2-personal-data/tools/restore.mjs']) {
     assert.equal(existsSync(join(out, rel)), true, `缺文件：${rel}`);
   }
   assert.equal(existsSync(built.zip), true);
+
+  // 快照必须「自包含」：旁边不许有派生出来的 -wal / -shm（否则只拷主库的还原路径可能丢数据）
+  assert.equal(existsSync(join(packageDir, 'data', 'memory.db-wal')), false, '包里混进了 memory.db-wal');
+  assert.equal(existsSync(join(packageDir, 'data', 'memory.db-shm')), false, '包里混进了 memory.db-shm');
+  const snapshotRaw = new DatabaseSync(join(packageDir, 'data', 'memory.db'), { readOnly: true });
+  try {
+    assert.equal(String(snapshotRaw.prepare('PRAGMA journal_mode').get().journal_mode), 'delete');
+    assert.equal(String(Object.values(snapshotRaw.prepare('PRAGMA integrity_check').get())[0]), 'ok');
+  } finally {
+    snapshotRaw.close();
+  }
 
   // 文档模板已全部渲染（不留占位符）
   for (const rel of ['README.md', 'INSTALL.md', 'AGENT-HANDOFF.md', '2-personal-data/README.md']) {

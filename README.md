@@ -166,6 +166,9 @@ Remove-Item Env:GH_TOKEN
 
 打包器**出包前自证**（任何一项不过就拒绝出包）：快照可读且数字与活库一致、文本包能无损导入空库、
 附属表计数一致、`src/host/*.js` 全部可 `import`、zip 回读逐条一致、设置与文档里扫不到密钥字面量。
+快照会先 `wal_checkpoint(TRUNCATE)` + 切回 `journal_mode=delete` 再出包（包里**不许**带
+`memory.db-wal/-shm` —— 只拷主库的还原路径遇到残 WAL 会丢数据）。包根另有 `VERIFY.mjs`：
+收包方一条命令核对整包文件清单与快照库自洽。
 
 跨平台安装器 `tools/install.mjs`（Windows / Linux / macOS 通用，Node 实现）与老的
 `tools/install.ps1` 写出的块**完全一致、互相认得**；两者都幂等、写前备份、原子写。
